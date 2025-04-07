@@ -12,10 +12,20 @@
 #define NUM_WORKSPACES 9
 #define MAX_WINDOWS 100
 
+// Tiling modu sabitleri
+#define MODE_FLOATING 0    // Serbest yerleşim
+#define MODE_TILING   1    // Döşeli yerleşim
+
+// Sabitler
+#define MASTER_SIZE  0.5   // Ana bölgenin ekran genişliğinin oranı
+
 // Global değişkenler
 Display *display;
 Window root;
 static Window focused_window = None;
+int window_mode = MODE_FLOATING;  // Başlangıçta serbest mod
+int master_width;                 // Ana bölge genişliği (piksel)
+int screen_width, screen_height;  // Ekran boyutları
 
 // Workspace yapısı
 typedef struct {
@@ -26,6 +36,109 @@ typedef struct {
 // Global workspace değişkenleri
 Workspace workspaces[NUM_WORKSPACES];
 int current_workspace = 0;  // Aktif workspace (0-8)
+
+// Fonksiyon prototipleri - main.c dosyasının başına ekleyin
+void rearrange_windows();
+void update_screen_dimensions();
+void toggle_tiling_mode();
+void adjust_master_size(int delta);
+void swap_master();
+
+// Tiling moduna geç
+void toggle_tiling_mode() {
+    window_mode = window_mode == MODE_FLOATING ? MODE_TILING : MODE_FLOATING;
+    printf("Mod değiştirildi: %s\n", window_mode == MODE_FLOATING ? "Serbest" : "Döşeli");
+    
+    // Mevcut workspace'teki tüm pencereleri yeniden düzenle
+    rearrange_windows();
+}
+
+// Ekran boyutlarını güncelle
+void update_screen_dimensions() {
+    Screen *screen = DefaultScreenOfDisplay(display);
+    screen_width = WidthOfScreen(screen);
+    screen_height = HeightOfScreen(screen);
+    master_width = screen_width * MASTER_SIZE;
+}
+
+// Aktif workspace'teki pencereleri düzenle
+void rearrange_windows() {
+    if (window_mode == MODE_FLOATING) {
+        return;  // Serbest modda pencereler yeniden düzenlenmez
+    }
+    
+    Workspace *ws = &workspaces[current_workspace];
+    int window_count = ws->window_count;
+    
+    if (window_count == 0) {
+        return;  // Pencere yoksa işlem yapma
+    }
+    
+    update_screen_dimensions();
+    
+    if (window_count == 1) {
+        // Tek pencere varsa, tam ekran yap
+        XMoveResizeWindow(display, ws->windows[0], 
+                         0, 0, 
+                         screen_width, screen_height);
+        return;
+    }
+    
+    // İlk pencere (ana) sol tarafta olacak
+    XMoveResizeWindow(display, ws->windows[0], 
+                     0, 0, 
+                     master_width, screen_height);
+    
+    // Diğer pencereler sağ tarafta eşit bölünecek
+    int stack_height = screen_height / (window_count - 1);
+    int stack_y = 0;
+    
+    for (int i = 1; i < window_count; i++) {
+        XMoveResizeWindow(display, ws->windows[i], 
+                         master_width, stack_y, 
+                         screen_width - master_width, stack_height);
+        stack_y += stack_height;
+    }
+}
+
+// Ana bölge genişliğini ayarla
+void adjust_master_size(int delta) {
+    update_screen_dimensions();
+    
+    // Ana bölge genişliğini değiştir (sınırlar içinde)
+    int new_master_width = master_width + delta;
+    if (new_master_width < screen_width * 0.1) {
+        new_master_width = screen_width * 0.1;  // Minimum %10
+    } else if (new_master_width > screen_width * 0.9) {
+        new_master_width = screen_width * 0.9;  // Maksimum %90
+    }
+    
+    master_width = new_master_width;
+    printf("Ana bölge genişliği: %d piksel (%d%%)\n", 
+           master_width, (master_width * 100) / screen_width);
+    
+    // Pencereleri yeni boyutlara göre düzenle
+    rearrange_windows();
+}
+
+// Ana pencere ile bir sonraki pencereyi değiştir
+void swap_master() {
+    Workspace *ws = &workspaces[current_workspace];
+    
+    if (ws->window_count < 2) {
+        return;  // En az 2 pencere olmalı
+    }
+    
+    // İlk iki pencereyi değiştir
+    Window temp = ws->windows[0];
+    ws->windows[0] = ws->windows[1];
+    ws->windows[1] = temp;
+    
+    // Pencereleri yeniden düzenle
+    rearrange_windows();
+    
+    printf("Ana pencere değiştirildi\n");
+}
 
 // Workspace yönetimi fonksiyonları
 void init_workspaces() {
@@ -119,6 +232,17 @@ static int orig_width, orig_height;     // Pencere orijinal boyutları
 static Window dragging_window = None;   // Şu an sürüklenen pencere
 static int resize_mode = 0;            // 0: taşıma, 1: boyutlandırma
 
+// Fonksiyon prototipleri
+void focus_window(Window window);
+void handle_map_request(XMapRequestEvent *event);
+void handle_button_press(XButtonEvent *event);
+void handle_destroy_notify(XDestroyWindowEvent *event);
+void handle_configure_request(XConfigureRequestEvent *event);
+void start_move(XButtonEvent *event);
+void start_resize(XButtonEvent *event);
+void handle_motion(XMotionEvent *event);
+void stop_drag(XButtonEvent *event);
+
 // Pencereyi odakla
 void focus_window(Window window) {
     if (window == None || window == root) {
@@ -164,6 +288,11 @@ void handle_map_request(XMapRequestEvent *event) {
     // Pencereyi mevcut workspace'e ekle
     add_window_to_workspace(event->window, current_workspace);
     
+    // Döşeli modda pencereleri yeniden düzenle
+    if (window_mode == MODE_TILING) {
+        rearrange_windows();
+    }
+    
     // Yeni pencereyi otomatik odakla
     focus_window(event->window);
     
@@ -187,6 +316,11 @@ void handle_button_press(XButtonEvent *event) {
 void handle_destroy_notify(XDestroyWindowEvent *event) {
     // Pencereyi mevcut workspace'den kaldır
     remove_window_from_workspace(event->window, current_workspace);
+    
+    // Pencereler kaldırıldıktan sonra yeniden düzenle
+    if (window_mode == MODE_TILING) {
+        rearrange_windows();
+    }
     
     if (event->window == focused_window) {
         focused_window = None;
@@ -354,14 +488,15 @@ void handle_key_press(XKeyEvent *event) {
     
     if (event->state & Mod1Mask) {  // Alt tuşu
         if (keysym >= XK_1 && keysym <= XK_9) {
-            int workspace = keysym - XK_1;  // 0-8 arası indeks
+            // Alt + 1-9: Workspace değiştir
+            int workspace = keysym - XK_1;
             printf("Alt + %d tuşuna basıldı\n", workspace + 1);
             switch_workspace(workspace);
         }
         else if (keysym == XK_d) {
             // Alt + d: dmenu çalıştır
             printf("dmenu çalıştırılıyor...\n");
-            exec_command("dmenu_run -l 10 -p 'Uygulama seç:' -fn 'Terminus-13' -nb '#242933' -sb '#1b1f26'");
+            exec_command("dmenu_run");
         }
         else if (keysym == XK_q) {
             // Alt + q: Aktif pencereyi kapat
@@ -369,6 +504,22 @@ void handle_key_press(XKeyEvent *event) {
                 printf("Aktif pencere kapatılıyor: %ld\n", focused_window);
                 close_window(focused_window);
             }
+        }
+        else if (keysym == XK_t) {
+            // Alt + t: Tiling modunu değiştir
+            toggle_tiling_mode();
+        }
+        else if (keysym == XK_h) {
+            // Alt + h: Ana bölge genişliğini azalt
+            adjust_master_size(-50);
+        }
+        else if (keysym == XK_l) {
+            // Alt + l: Ana bölge genişliğini arttır
+            adjust_master_size(50);
+        }
+        else if (keysym == XK_Return) {
+            // Alt + Enter: Ana pencere ile değiştir
+            swap_master();
         }
     }
 }
@@ -431,10 +582,31 @@ int main() {
                  GrabModeAsync);
     }
 
+    // Ekran boyutlarını başlat
+    update_screen_dimensions();
+
+    // Özel tuşları ayarla
+    KeyCode t_key = XKeysymToKeycode(display, XK_t);
+    XGrabKey(display, t_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    
+    KeyCode h_key = XKeysymToKeycode(display, XK_h);
+    XGrabKey(display, h_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    
+    KeyCode l_key = XKeysymToKeycode(display, XK_l);
+    XGrabKey(display, l_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    
+    KeyCode return_key = XKeysymToKeycode(display, XK_Return);
+    XGrabKey(display, return_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+
     XSetErrorHandler(error_handler);
 
     printf("Pencere yöneticisi başlatıldı...\n");
     printf("Alt + 1-9: Workspace değiştir\n");
+    printf("Alt + d: dmenu çalıştır\n");
+    printf("Alt + q: Aktif pencereyi kapat\n");
+    printf("Alt + t: Tiling/Floating mod değiştir\n");
+    printf("Alt + h/l: Ana bölge genişliğini azalt/arttır\n");
+    printf("Alt + Enter: Ana pencere ile değiştir\n");
 
     // Ana döngü
     XEvent event;
