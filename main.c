@@ -19,6 +19,29 @@
 // Sabitler
 #define MASTER_SIZE  0.5   // Ana bölgenin ekran genişliğinin oranı
 
+// Fonksiyon prototipleri
+void focus_window(Window window);
+void handle_map_request(XMapRequestEvent *event);
+void handle_button_press(XButtonEvent *event);
+void handle_destroy_notify(XDestroyWindowEvent *event);
+void handle_configure_request(XConfigureRequestEvent *event);
+void start_move(XButtonEvent *event);
+void start_resize(XButtonEvent *event);
+void handle_motion(XMotionEvent *event);
+void stop_drag(XButtonEvent *event);
+void rearrange_windows();
+void update_screen_dimensions();
+void toggle_tiling_mode();
+void adjust_master_size(int delta);
+void swap_master();
+
+// Fare ile sürükleme işlemi için gerekli değişkenler
+static int start_x, start_y;           // Sürükleme başlangıç koordinatları
+static int orig_x, orig_y;             // Pencere orijinal koordinatları
+static int orig_width, orig_height;     // Pencere orijinal boyutları
+static Window dragging_window = None;   // Şu an sürüklenen pencere
+static int resize_mode = 0;            // 0: taşıma, 1: boyutlandırma
+
 // Global değişkenler
 Display *display;
 Window root;
@@ -37,12 +60,6 @@ typedef struct {
 Workspace workspaces[NUM_WORKSPACES];
 int current_workspace = 0;  // Aktif workspace (0-8)
 
-// Fonksiyon prototipleri - main.c dosyasının başına ekleyin
-void rearrange_windows();
-void update_screen_dimensions();
-void toggle_tiling_mode();
-void adjust_master_size(int delta);
-void swap_master();
 
 // Tiling moduna geç
 void toggle_tiling_mode() {
@@ -214,34 +231,7 @@ void switch_workspace(int new_workspace) {
     XSync(display, False);
 }
 
-// Fonksiyon prototipleri
-void focus_window(Window window);
-void handle_map_request(XMapRequestEvent *event);
-void handle_button_press(XButtonEvent *event);
-void handle_destroy_notify(XDestroyWindowEvent *event);
-void handle_configure_request(XConfigureRequestEvent *event);
-void start_move(XButtonEvent *event);
-void start_resize(XButtonEvent *event);
-void handle_motion(XMotionEvent *event);
-void stop_drag(XButtonEvent *event);
 
-// Fare ile sürükleme işlemi için gerekli değişkenler
-static int start_x, start_y;           // Sürükleme başlangıç koordinatları
-static int orig_x, orig_y;             // Pencere orijinal koordinatları
-static int orig_width, orig_height;     // Pencere orijinal boyutları
-static Window dragging_window = None;   // Şu an sürüklenen pencere
-static int resize_mode = 0;            // 0: taşıma, 1: boyutlandırma
-
-// Fonksiyon prototipleri
-void focus_window(Window window);
-void handle_map_request(XMapRequestEvent *event);
-void handle_button_press(XButtonEvent *event);
-void handle_destroy_notify(XDestroyWindowEvent *event);
-void handle_configure_request(XConfigureRequestEvent *event);
-void start_move(XButtonEvent *event);
-void start_resize(XButtonEvent *event);
-void handle_motion(XMotionEvent *event);
-void stop_drag(XButtonEvent *event);
 
 // Pencereyi odakla
 void focus_window(Window window) {
@@ -482,11 +472,69 @@ void close_window(Window window) {
     printf("Pencere kapatma isteği gönderildi: %ld\n", window);
 }
 
+// Fonksiyon prototipi
+void move_window_to_workspace(Window window, int from_ws, int to_ws);
+
+// Pencereyi başka bir workspace'e taşı
+void move_window_to_workspace(Window window, int from_ws, int to_ws) {
+    if (from_ws < 0 || from_ws >= NUM_WORKSPACES ||
+        to_ws < 0 || to_ws >= NUM_WORKSPACES ||
+        from_ws == to_ws || window == None) {
+        return;
+    }
+    
+    // Pencereyi eski workspace'den kaldır
+    remove_window_from_workspace(window, from_ws);
+    
+    // Pencereyi yeni workspace'e ekle
+    add_window_to_workspace(window, to_ws);
+    
+    // Aktif workspace değiştiyse, pencereyi sakla/göster
+    if (current_workspace != to_ws) {
+        XUnmapWindow(display, window);
+    } else {
+        XMapWindow(display, window);
+    }
+    
+    // Döşeme modunda eski ve yeni workspace'teki pencereleri düzenle
+    if (window_mode == MODE_TILING) {
+        // Geçici olarak workspace'i değiştir ve düzenle
+        int temp_ws = current_workspace;
+        
+        if (from_ws != current_workspace) {
+            current_workspace = from_ws;
+            rearrange_windows();
+        }
+        
+        if (to_ws != from_ws) {
+            current_workspace = to_ws;
+            rearrange_windows();
+        }
+        
+        current_workspace = temp_ws;
+    }
+    
+    printf("Pencere %ld workspace %d'den %d'e taşındı\n", 
+           window, from_ws + 1, to_ws + 1);
+}
+
 // Klavye olaylarını işle
 void handle_key_press(XKeyEvent *event) {
     KeySym keysym = XkbKeycodeToKeysym(display, event->keycode, 0, 0);
     
-    if (event->state & Mod1Mask) {  // Alt tuşu
+    // Alt+Shift kombinasyonlarını kontrol et
+    if ((event->state & Mod1Mask) && (event->state & ShiftMask)) {
+        if (keysym >= XK_1 && keysym <= XK_9) {
+            // Alt + Shift + 1-9: Aktif pencereyi başka workspace'e taşı
+            if (focused_window != None) {
+                int target_workspace = keysym - XK_1;
+                printf("Alt + Shift + %d tuşuna basıldı\n", target_workspace + 1);
+                move_window_to_workspace(focused_window, current_workspace, target_workspace);
+            }
+        }
+    }
+    // Sadece Alt tuşu kombinasyonlarını kontrol et
+    else if (event->state & Mod1Mask) {
         if (keysym >= XK_1 && keysym <= XK_9) {
             // Alt + 1-9: Workspace değiştir
             int workspace = keysym - XK_1;
@@ -496,7 +544,7 @@ void handle_key_press(XKeyEvent *event) {
         else if (keysym == XK_d) {
             // Alt + d: dmenu çalıştır
             printf("dmenu çalıştırılıyor...\n");
-            exec_command("dmenu_run");
+            exec_command("dmenu_run -l 10 -p 'Uygulama seç:' -fn 'Terminus-13' -nb '#242933' -sb '#1b1f26'");
         }
         else if (keysym == XK_q) {
             // Alt + q: Aktif pencereyi kapat
@@ -570,12 +618,12 @@ int main() {
     KeyCode q_key = XKeysymToKeycode(display, XK_q);
     XGrabKey(display, q_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
 
-    // Alt + 1-9 tuşlarını özel olarak yakala
+    // Alt+Shift+1-9 tuşlarını yakala
     for (int i = XK_1; i <= XK_9; i++) {
         KeyCode keycode = XKeysymToKeycode(display, i);
         XGrabKey(display, 
                  keycode,
-                 Mod1Mask,
+                 Mod1Mask | ShiftMask,  // Alt+Shift
                  root,
                  True,
                  GrabModeAsync,
@@ -602,6 +650,7 @@ int main() {
 
     printf("Pencere yöneticisi başlatıldı...\n");
     printf("Alt + 1-9: Workspace değiştir\n");
+    printf("Alt + Shift + 1-9: Aktif pencereyi belirtilen workspace'e taşı\n");
     printf("Alt + d: dmenu çalıştır\n");
     printf("Alt + q: Aktif pencereyi kapat\n");
     printf("Alt + t: Tiling/Floating mod değiştir\n");
