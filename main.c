@@ -4,6 +4,9 @@
 #include <X11/XKBlib.h>  // XkbKeycodeToKeysym için
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <string.h>  // memset fonksiyonu için gerekli
 
 // Workspace sabitleri
 #define NUM_WORKSPACES 9
@@ -312,6 +315,39 @@ void stop_drag(XButtonEvent *event) {
     }
 }
 
+// Bir komutu çalıştır
+void exec_command(const char *cmd) {
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // Çocuk süreçte komutu çalıştır
+        setsid();
+        system(cmd);
+        exit(EXIT_SUCCESS);
+    }
+    // Ebeveyn süreç devam eder
+}
+
+// Aktif pencereyi kapat
+void close_window(Window window) {
+    if (window == None || window == root) {
+        return;
+    }
+    
+    // Pencereye kapatma mesajı gönder
+    XEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = ClientMessage;
+    ev.xclient.window = window;
+    ev.xclient.message_type = XInternAtom(display, "WM_PROTOCOLS", False);
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    ev.xclient.data.l[1] = CurrentTime;
+    
+    XSendEvent(display, window, False, NoEventMask, &ev);
+    printf("Pencere kapatma isteği gönderildi: %ld\n", window);
+}
+
 // Klavye olaylarını işle
 void handle_key_press(XKeyEvent *event) {
     KeySym keysym = XkbKeycodeToKeysym(display, event->keycode, 0, 0);
@@ -321,6 +357,18 @@ void handle_key_press(XKeyEvent *event) {
             int workspace = keysym - XK_1;  // 0-8 arası indeks
             printf("Alt + %d tuşuna basıldı\n", workspace + 1);
             switch_workspace(workspace);
+        }
+        else if (keysym == XK_d) {
+            // Alt + d: dmenu çalıştır
+            printf("dmenu çalıştırılıyor...\n");
+            exec_command("dmenu_run -l 10 -p 'Uygulama seç:' -fn 'Terminus-13' -nb '#242933' -sb '#1b1f26'");
+        }
+        else if (keysym == XK_q) {
+            // Alt + q: Aktif pencereyi kapat
+            if (focused_window != None) {
+                printf("Aktif pencere kapatılıyor: %ld\n", focused_window);
+                close_window(focused_window);
+            }
         }
     }
 }
@@ -354,6 +402,22 @@ int main() {
              True,             // Owner events
              GrabModeAsync,    // Pointer grab modu
              GrabModeAsync);   // Keyboard grab modu
+
+    // Alt + tuş kombinasyonlarını yakala
+    XGrabKey(display, 
+             AnyKey,
+             Mod1Mask,
+             root,
+             True,
+             GrabModeAsync,
+             GrabModeAsync);
+
+    // Özel tuşları ayrıca ayarla
+    KeyCode d_key = XKeysymToKeycode(display, XK_d);
+    XGrabKey(display, d_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    
+    KeyCode q_key = XKeysymToKeycode(display, XK_q);
+    XGrabKey(display, q_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
 
     // Alt + 1-9 tuşlarını özel olarak yakala
     for (int i = XK_1; i <= XK_9; i++) {
