@@ -1,10 +1,102 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
+#include <X11/keysym.h>  // Klavye tuşları için
+#include <X11/XKBlib.h>  // XkbKeycodeToKeysym için
 #include <stdio.h>
 #include <stdlib.h>
 
+// Workspace sabitleri
+#define NUM_WORKSPACES 9
+#define MAX_WINDOWS 100
+
+// Global değişkenler
 Display *display;
 Window root;
+static Window focused_window = None;
+
+// Workspace yapısı
+typedef struct {
+    Window windows[MAX_WINDOWS];  // Bu workspace'teki pencereler
+    int window_count;            // Pencere sayısı
+} Workspace;
+
+// Global workspace değişkenleri
+Workspace workspaces[NUM_WORKSPACES];
+int current_workspace = 0;  // Aktif workspace (0-8)
+
+// Workspace yönetimi fonksiyonları
+void init_workspaces() {
+    for (int i = 0; i < NUM_WORKSPACES; i++) {
+        workspaces[i].window_count = 0;
+        for (int j = 0; j < MAX_WINDOWS; j++) {
+            workspaces[i].windows[j] = None;
+        }
+    }
+    printf("Workspaces başlatıldı\n");
+}
+
+// Pencereyi workspace'e ekle
+void add_window_to_workspace(Window w, int workspace) {
+    if (workspace < 0 || workspace >= NUM_WORKSPACES) return;
+    if (workspaces[workspace].window_count >= MAX_WINDOWS) return;
+    
+    // Pencere zaten bu workspace'te mi kontrol et
+    for (int i = 0; i < workspaces[workspace].window_count; i++) {
+        if (workspaces[workspace].windows[i] == w) return;
+    }
+    
+    workspaces[workspace].windows[workspaces[workspace].window_count++] = w;
+    printf("Pencere %ld workspace %d'e eklendi\n", w, workspace + 1);
+}
+
+// Pencereyi workspace'den kaldır
+void remove_window_from_workspace(Window w, int workspace) {
+    if (workspace < 0 || workspace >= NUM_WORKSPACES) return;
+    
+    for (int i = 0; i < workspaces[workspace].window_count; i++) {
+        if (workspaces[workspace].windows[i] == w) {
+            // Pencereyi listeden çıkar ve diğerlerini kaydır
+            for (int j = i; j < workspaces[workspace].window_count - 1; j++) {
+                workspaces[workspace].windows[j] = workspaces[workspace].windows[j + 1];
+            }
+            workspaces[workspace].window_count--;
+            printf("Pencere %ld workspace %d'den kaldırıldı\n", w, workspace + 1);
+            break;
+        }
+    }
+}
+
+// Workspace'i değiştir
+void switch_workspace(int new_workspace) {
+    if (new_workspace < 0 || new_workspace >= NUM_WORKSPACES) return;
+    if (new_workspace == current_workspace) return;
+
+    printf("Workspace değiştiriliyor: %d -> %d\n", current_workspace + 1, new_workspace + 1);
+
+    // Mevcut workspace'deki pencereleri gizle
+    for (int i = 0; i < workspaces[current_workspace].window_count; i++) {
+        Window w = workspaces[current_workspace].windows[i];
+        if (w != None) {
+            XUnmapWindow(display, w);
+            printf("Pencere gizlendi: %ld\n", w);
+        }
+    }
+
+    // Yeni workspace'e geç
+    current_workspace = new_workspace;
+
+    // Yeni workspace'deki pencereleri göster
+    for (int i = 0; i < workspaces[current_workspace].window_count; i++) {
+        Window w = workspaces[current_workspace].windows[i];
+        if (w != None) {
+            XMapWindow(display, w);
+            printf("Pencere gösterildi: %ld\n", w);
+        }
+    }
+
+    // Değişiklikleri hemen uygula
+    XSync(display, False);
+}
 
 // Fonksiyon prototipleri
 void focus_window(Window window);
@@ -23,9 +115,6 @@ static int orig_x, orig_y;             // Pencere orijinal koordinatları
 static int orig_width, orig_height;     // Pencere orijinal boyutları
 static Window dragging_window = None;   // Şu an sürüklenen pencere
 static int resize_mode = 0;            // 0: taşıma, 1: boyutlandırma
-
-// Global değişkenlere ekle
-static Window focused_window = None;
 
 // Pencereyi odakla
 void focus_window(Window window) {
@@ -59,7 +148,8 @@ void handle_map_request(XMapRequestEvent *event) {
                 EnterWindowMask |
                 FocusChangeMask |
                 PropertyChangeMask |
-                StructureNotifyMask);
+                StructureNotifyMask |
+                KeyPressMask);  // Klavye olaylarını da dinle
     
     // Pencere konumunu ve boyutunu ayarla
     XMoveResizeWindow(display, event->window,
@@ -68,10 +158,13 @@ void handle_map_request(XMapRequestEvent *event) {
                      attrs.width,
                      attrs.height);
     
+    // Pencereyi mevcut workspace'e ekle
+    add_window_to_workspace(event->window, current_workspace);
+    
     // Yeni pencereyi otomatik odakla
     focus_window(event->window);
     
-    printf("Yeni pencere oluşturuldu ve odaklandı: %ld\n", event->window);
+    printf("Yeni pencere workspace %d'e eklendi: %ld\n", current_workspace + 1, event->window);
 }
 
 // Pencere tıklama olayını işle
@@ -89,6 +182,9 @@ void handle_button_press(XButtonEvent *event) {
 
 // Pencere yok edildiğinde odağı temizle
 void handle_destroy_notify(XDestroyWindowEvent *event) {
+    // Pencereyi mevcut workspace'den kaldır
+    remove_window_from_workspace(event->window, current_workspace);
+    
     if (event->window == focused_window) {
         focused_window = None;
         // Fare konumundaki pencereye odaklan
@@ -106,7 +202,7 @@ void handle_destroy_notify(XDestroyWindowEvent *event) {
             focus_window(child_return);
         }
     }
-    printf("Pencere yok edildi: %ld\n", event->window);
+    printf("Pencere workspace %d'den kaldırıldı: %ld\n", current_workspace + 1, event->window);
 }
 
 // Pencere yapılandırma değişikliklerini işle
@@ -216,16 +312,30 @@ void stop_drag(XButtonEvent *event) {
     }
 }
 
+// Klavye olaylarını işle
+void handle_key_press(XKeyEvent *event) {
+    KeySym keysym = XkbKeycodeToKeysym(display, event->keycode, 0, 0);
+    
+    if (event->state & Mod1Mask) {  // Alt tuşu
+        if (keysym >= XK_1 && keysym <= XK_9) {
+            int workspace = keysym - XK_1;  // 0-8 arası indeks
+            printf("Alt + %d tuşuna basıldı\n", workspace + 1);
+            switch_workspace(workspace);
+        }
+    }
+}
+
 int main() {
-    // X sunucusuna bağlan
     display = XOpenDisplay(NULL);
     if (!display) {
         fprintf(stderr, "X sunucusuna bağlanılamadı.\n");
         return 1;
     }
 
-    // Root pencereyi al
     root = DefaultRootWindow(display);
+
+    // Workspace'leri başlat
+    init_workspaces();
 
     // Root pencere için olay maskesini güncelle
     XSelectInput(display, root,
@@ -233,12 +343,34 @@ int main() {
                 SubstructureNotifyMask |
                 ButtonPressMask |
                 ButtonReleaseMask |
-                PointerMotionMask);
+                PointerMotionMask |
+                KeyPressMask);
 
-    // Error handler'ı ayarla (X sunucusu başka bir pencere yöneticisi çalışıyorsa hata alırız)
+    // Klavye olaylarını root pencereye yönlendir
+    XGrabKey(display, 
+             AnyKey,           // Tüm tuşları yakala
+             Mod1Mask,         // Alt tuşu ile birlikte
+             root,             // Root pencerede
+             True,             // Owner events
+             GrabModeAsync,    // Pointer grab modu
+             GrabModeAsync);   // Keyboard grab modu
+
+    // Alt + 1-9 tuşlarını özel olarak yakala
+    for (int i = XK_1; i <= XK_9; i++) {
+        KeyCode keycode = XKeysymToKeycode(display, i);
+        XGrabKey(display, 
+                 keycode,
+                 Mod1Mask,
+                 root,
+                 True,
+                 GrabModeAsync,
+                 GrabModeAsync);
+    }
+
     XSetErrorHandler(error_handler);
 
     printf("Pencere yöneticisi başlatıldı...\n");
+    printf("Alt + 1-9: Workspace değiştir\n");
 
     // Ana döngü
     XEvent event;
@@ -264,7 +396,10 @@ int main() {
             case MotionNotify:
                 handle_motion(&event.xmotion);
                 break;
-            case EnterNotify:  // Fare pencereye girdiğinde
+            case KeyPress:
+                handle_key_press(&event.xkey);
+                break;
+            case EnterNotify:
                 if (event.xcrossing.mode == NotifyNormal) {
                     focus_window(event.xcrossing.window);
                 }
@@ -272,7 +407,8 @@ int main() {
         }
     }
 
-    // Temizlik
+    // Program sonunda temizlik
+    XUngrabKey(display, AnyKey, AnyModifier, root);
     XCloseDisplay(display);
     return 0;
 }
