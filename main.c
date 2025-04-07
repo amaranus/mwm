@@ -6,12 +6,44 @@
 Display *display;
 Window root;
 
+// Fonksiyon prototipleri
+void focus_window(Window window);
+void handle_map_request(XMapRequestEvent *event);
+void handle_button_press(XButtonEvent *event);
+void handle_destroy_notify(XDestroyWindowEvent *event);
+void handle_configure_request(XConfigureRequestEvent *event);
+void start_move(XButtonEvent *event);
+void start_resize(XButtonEvent *event);
+void handle_motion(XMotionEvent *event);
+void stop_drag(XButtonEvent *event);
+
 // Fare ile sürükleme işlemi için gerekli değişkenler
 static int start_x, start_y;           // Sürükleme başlangıç koordinatları
 static int orig_x, orig_y;             // Pencere orijinal koordinatları
 static int orig_width, orig_height;     // Pencere orijinal boyutları
 static Window dragging_window = None;   // Şu an sürüklenen pencere
 static int resize_mode = 0;            // 0: taşıma, 1: boyutlandırma
+
+// Global değişkenlere ekle
+static Window focused_window = None;
+
+// Pencereyi odakla
+void focus_window(Window window) {
+    if (window == None || window == root) {
+        return;
+    }
+
+    // Önceki odaklanmış pencereyi temizle
+    if (focused_window != None) {
+        XSetWindowBorder(display, focused_window, 0x000000);
+    }
+
+    // Yeni pencereyi odakla
+    focused_window = window;
+    XSetWindowBorder(display, window, 0x4C7899);  // Mavi tonunda bir kenarlık
+    XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+    XRaiseWindow(display, window);  // Pencereyi öne getir
+}
 
 // Yeni pencere oluşturma isteğini işle
 void handle_map_request(XMapRequestEvent *event) {
@@ -29,18 +61,51 @@ void handle_map_request(XMapRequestEvent *event) {
                 PropertyChangeMask |
                 StructureNotifyMask);
     
-    // Pencere konumunu ve boyutunu ayarla (varsayılan değerler)
+    // Pencere konumunu ve boyutunu ayarla
     XMoveResizeWindow(display, event->window,
                      attrs.x,
                      attrs.y,
                      attrs.width,
                      attrs.height);
     
-    printf("Yeni pencere oluşturuldu: %ld\n", event->window);
+    // Yeni pencereyi otomatik odakla
+    focus_window(event->window);
+    
+    printf("Yeni pencere oluşturuldu ve odaklandı: %ld\n", event->window);
 }
 
-// Pencere yok edildiğinde yapılacak işlemler
+// Pencere tıklama olayını işle
+void handle_button_press(XButtonEvent *event) {
+    if (event->button == Button1) {  // Sol tık
+        // Pencereyi odakla ve taşımaya başla
+        focus_window(event->window);
+        start_move(event);
+    } else if (event->button == Button3) {  // Sağ tık
+        // Pencereyi odakla ve boyutlandırmaya başla
+        focus_window(event->window);
+        start_resize(event);
+    }
+}
+
+// Pencere yok edildiğinde odağı temizle
 void handle_destroy_notify(XDestroyWindowEvent *event) {
+    if (event->window == focused_window) {
+        focused_window = None;
+        // Fare konumundaki pencereye odaklan
+        Window root_return, child_return;
+        int root_x, root_y, win_x, win_y;
+        unsigned int mask_return;
+        
+        XQueryPointer(display, root,
+                     &root_return, &child_return,
+                     &root_x, &root_y,
+                     &win_x, &win_y,
+                     &mask_return);
+                     
+        if (child_return != None) {
+            focus_window(child_return);
+        }
+    }
     printf("Pencere yok edildi: %ld\n", event->window);
 }
 
@@ -180,7 +245,6 @@ int main() {
     while (1) {
         XNextEvent(display, &event);
         
-        // Olay türüne göre işle
         switch (event.type) {
             case MapRequest:
                 handle_map_request(&event.xmaprequest);
@@ -192,17 +256,18 @@ int main() {
                 handle_configure_request(&event.xconfigurerequest);
                 break;
             case ButtonPress:
-                if (event.xbutton.button == Button1) {  // Sol tık
-                    start_move(&event.xbutton);
-                } else if (event.xbutton.button == Button3) {  // Sağ tık
-                    start_resize(&event.xbutton);
-                }
+                handle_button_press(&event.xbutton);
                 break;
             case ButtonRelease:
                 stop_drag(&event.xbutton);
                 break;
             case MotionNotify:
                 handle_motion(&event.xmotion);
+                break;
+            case EnterNotify:  // Fare pencereye girdiğinde
+                if (event.xcrossing.mode == NotifyNormal) {
+                    focus_window(event.xcrossing.window);
+                }
                 break;
         }
     }
