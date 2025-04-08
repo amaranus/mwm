@@ -60,6 +60,21 @@ typedef struct {
 Workspace workspaces[NUM_WORKSPACES];
 int current_workspace = 0;  // Aktif workspace (0-8)
 
+// Tuş kodları için yapı tanımı
+typedef struct {
+    KeyCode d_key;
+    KeyCode q_key;
+    KeyCode t_key;
+    KeyCode h_key;
+    KeyCode l_key;
+    KeyCode return_key;
+    KeyCode volume_raise_key;
+    KeyCode volume_lower_key;
+    KeyCode volume_mute_key;
+} KeyBindings;
+
+// Global tuş kodları değişkeni
+KeyBindings keys;
 
 // Tiling moduna geç
 void toggle_tiling_mode() {
@@ -230,8 +245,6 @@ void switch_workspace(int new_workspace) {
     // Değişiklikleri hemen uygula
     XSync(display, False);
 }
-
-
 
 // Pencereyi odakla
 void focus_window(Window window) {
@@ -518,7 +531,45 @@ void move_window_to_workspace(Window window, int from_ws, int to_ws) {
            window, from_ws + 1, to_ws + 1);
 }
 
-// Klavye olaylarını işle
+// Tuş kodlarını başlat fonksiyonu (main içinde çağrılacak)
+void init_keybindings() {
+    keys.d_key = XKeysymToKeycode(display, XK_d);
+    keys.q_key = XKeysymToKeycode(display, XK_q);
+    keys.t_key = XKeysymToKeycode(display, XK_t);
+    keys.h_key = XKeysymToKeycode(display, XK_h);
+    keys.l_key = XKeysymToKeycode(display, XK_l);
+    keys.return_key = XKeysymToKeycode(display, XK_Return);
+    keys.volume_raise_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioRaiseVolume"));
+    keys.volume_lower_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioLowerVolume"));
+    keys.volume_mute_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioMute"));
+}
+
+// Tuş yakalama fonksiyonu
+void grab_keys() {
+    // Alt + tuş kombinasyonları
+    XGrabKey(display, keys.d_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.q_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.t_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.h_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.l_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.return_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.return_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    
+    // Ses tuşları (modifikatör olmadan)
+    XGrabKey(display, keys.volume_raise_key, 0, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.volume_lower_key, 0, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.volume_mute_key, 0, root, True, GrabModeAsync, GrabModeAsync);
+    
+    // Alt + 1-9 tuşları
+    for (int i = XK_1; i <= XK_9; i++) {
+        KeyCode keycode = XKeysymToKeycode(display, i);
+        XGrabKey(display, keycode, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+        // Alt + Shift + 1-9 için
+        XGrabKey(display, keycode, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    }
+}
+
+// Klavye olaylarını işle (güncellendi)
 void handle_key_press(XKeyEvent *event) {
     KeySym keysym = XkbKeycodeToKeysym(display, event->keycode, 0, 0);
     
@@ -532,7 +583,7 @@ void handle_key_press(XKeyEvent *event) {
                 move_window_to_workspace(focused_window, current_workspace, target_workspace);
             }
         }
-        else if (keysym == XK_Return) {
+        else if (event->keycode == keys.return_key) {
             // Alt + Shift + Enter: Terminal aç
             printf("Terminal açılıyor...\n");
             exec_command("xterm");
@@ -546,34 +597,46 @@ void handle_key_press(XKeyEvent *event) {
             printf("Alt + %d tuşuna basıldı\n", workspace + 1);
             switch_workspace(workspace);
         }
-        else if (keysym == XK_d) {
+        else if (event->keycode == keys.d_key) {
             // Alt + d: dmenu çalıştır
             printf("dmenu çalıştırılıyor...\n");
             exec_command("dmenu_run -l 10 -p 'Uygulama seç:' -fn 'Terminus-13' -nb '#242933' -sb '#1b1f26'");
         }
-        else if (keysym == XK_q) {
+        else if (event->keycode == keys.q_key) {
             // Alt + q: Aktif pencereyi kapat
             if (focused_window != None) {
                 printf("Aktif pencere kapatılıyor: %ld\n", focused_window);
                 close_window(focused_window);
             }        
         }
-        else if (keysym == XK_t) {
+        else if (event->keycode == keys.t_key) {
             // Alt + t: Tiling modunu değiştir
             toggle_tiling_mode();
         }
-        else if (keysym == XK_h) {
+        else if (event->keycode == keys.h_key) {
             // Alt + h: Ana bölge genişliğini azalt
             adjust_master_size(-50);
         }
-        else if (keysym == XK_l) {
+        else if (event->keycode == keys.l_key) {
             // Alt + l: Ana bölge genişliğini arttır
             adjust_master_size(50);
         }
-        else if (keysym == XK_Return) {
+        else if (event->keycode == keys.return_key) {
             // Alt + Enter: Ana pencere ile değiştir
             swap_master();
         }
+    }
+    else if (event->keycode == keys.volume_raise_key) {
+        // Ses açma tuşu
+        exec_command("amixer set Master 5%+");
+    }
+    else if (event->keycode == keys.volume_lower_key) {
+        // Ses kısma tuşu
+        exec_command("amixer set Master 5%-");
+    }
+    else if (event->keycode == keys.volume_mute_key) {
+        // Ses kapatma tuşu
+        exec_command("amixer set Master toggle");
     }
 }
 
@@ -588,6 +651,12 @@ int main() {
 
     // Workspace'leri başlat
     init_workspaces();
+    
+    // Ekran boyutlarını başlat
+    update_screen_dimensions();
+    
+    // Tuş kodlarını başlat - YENİ
+    init_keybindings();
 
     // Root pencere için olay maskesini güncelle
     XSelectInput(display, root,
@@ -599,48 +668,7 @@ int main() {
                 KeyPressMask);
 
     // Klavye olaylarını root pencereye yönlendir
-    XGrabKey(display, 
-             AnyKey,           // Tüm tuşları yakala
-             Mod1Mask,         // Alt tuşu ile birlikte
-             root,             // Root pencerede
-             True,             // Owner events
-             GrabModeAsync,    // Pointer grab modu
-             GrabModeAsync);   // Keyboard grab modu
-
-    // Özel tuşları ayarla
-    // d tuşu
-    KeyCode d_key = XKeysymToKeycode(display, XK_d);
-    XGrabKey(display, d_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    // q tuşu
-    KeyCode q_key = XKeysymToKeycode(display, XK_q);
-    XGrabKey(display, q_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    // t tuşu
-    KeyCode t_key = XKeysymToKeycode(display, XK_t);
-    XGrabKey(display, t_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    // h tuşu
-    KeyCode h_key = XKeysymToKeycode(display, XK_h);
-    XGrabKey(display, h_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    // l tuşu
-    KeyCode l_key = XKeysymToKeycode(display, XK_l);
-    XGrabKey(display, l_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    // return tuşu
-    KeyCode return_key = XKeysymToKeycode(display, XK_Return);
-    XGrabKey(display, return_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-
-    // Alt+Shift+1-9 tuşlarını yakala
-    for (int i = XK_1; i <= XK_9; i++) {
-        KeyCode keycode = XKeysymToKeycode(display, i);
-        XGrabKey(display, 
-                 keycode,
-                 Mod1Mask | ShiftMask,  // Alt+Shift
-                 root,
-                 True,
-                 GrabModeAsync,
-                 GrabModeAsync);
-    }
-
-    // Ekran boyutlarını başlat
-    update_screen_dimensions();
+    grab_keys();  // YENİ - Önceki tüm XGrabKey çağrıları yerine
 
     XSetErrorHandler(error_handler);
 
