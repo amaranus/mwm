@@ -18,6 +18,8 @@
 
 // Sabitler
 #define MASTER_SIZE  0.5   // Ana bölgenin ekran genişliğinin oranı
+#define OUTER_GAP 10    // Ekran kenarlarıyla pencereler arası boşluk
+#define INNER_GAP 10    // Pencereler arası boşluk
 
 // Fonksiyon prototipleri
 void focus_window(Window window);
@@ -32,8 +34,10 @@ void stop_drag(XButtonEvent *event);
 void rearrange_windows();
 void update_screen_dimensions();
 void toggle_tiling_mode();
-void adjust_master_size(int delta);
+void adjust_master_size(float delta_percent);
 void swap_master();
+void toggle_gaps();
+void adjust_gaps(int outer_delta, int inner_delta);
 
 // Fare ile sürükleme işlemi için gerekli değişkenler
 static int start_x, start_y;           // Sürükleme başlangıç koordinatları
@@ -49,6 +53,10 @@ static Window focused_window = None;
 int window_mode = MODE_FLOATING;  // Başlangıçta serbest mod
 int master_width;                 // Ana bölge genişliği (piksel)
 int screen_width, screen_height;  // Ekran boyutları
+int outer_gap = OUTER_GAP;
+int inner_gap = INNER_GAP;
+int gaps_enabled = 1;   // Boşluklar varsayılan olarak açık
+float master_size_percent = 50.0;  // Ana bölge genişliği yüzdesi (başlangıçta %50)
 
 // Workspace yapısı
 typedef struct {
@@ -71,6 +79,9 @@ typedef struct {
     KeyCode volume_raise_key;
     KeyCode volume_lower_key;
     KeyCode volume_mute_key;
+    KeyCode g_key;          // Boşlukları aç/kapa
+    KeyCode j_key;          // Boşlukları azalt
+    KeyCode k_key;          // Boşlukları artır
 } KeyBindings;
 
 // Global tuş kodları değişkeni
@@ -90,65 +101,94 @@ void update_screen_dimensions() {
     Screen *screen = DefaultScreenOfDisplay(display);
     screen_width = WidthOfScreen(screen);
     screen_height = HeightOfScreen(screen);
-    master_width = screen_width * MASTER_SIZE;
+    // Ana bölge genişliğini yüzdeye göre güncelle
+    master_width = (int)((float)screen_width * (master_size_percent / 100.0));
 }
 
 // Aktif workspace'teki pencereleri düzenle
 void rearrange_windows() {
     if (window_mode == MODE_FLOATING) {
-        return;  // Serbest modda pencereler yeniden düzenlenmez
+        return;
     }
     
     Workspace *ws = &workspaces[current_workspace];
     int window_count = ws->window_count;
     
     if (window_count == 0) {
-        return;  // Pencere yoksa işlem yapma
-    }
-    
-    update_screen_dimensions();
-    
-    if (window_count == 1) {
-        // Tek pencere varsa, tam ekran yap
-        XMoveResizeWindow(display, ws->windows[0], 
-                         0, 0, 
-                         screen_width, screen_height);
         return;
     }
     
-    // İlk pencere (ana) sol tarafta olacak
-    XMoveResizeWindow(display, ws->windows[0], 
-                     0, 0, 
-                     master_width, screen_height);
+    update_screen_dimensions();
+
+    // Boşlukları hesapla
+    int effective_outer_gap = gaps_enabled ? outer_gap : 0;
+    int effective_inner_gap = gaps_enabled ? inner_gap : 0;
     
-    // Diğer pencereler sağ tarafta eşit bölünecek
-    int stack_height = screen_height / (window_count - 1);
-    int stack_y = 0;
+    // Çalışma alanını hesapla
+    int work_x = effective_outer_gap;
+    int work_y = effective_outer_gap;
+    int work_width = screen_width - (2 * effective_outer_gap);
+    int work_height = screen_height - (2 * effective_outer_gap);
     
-    for (int i = 1; i < window_count; i++) {
-        XMoveResizeWindow(display, ws->windows[i], 
-                         master_width, stack_y, 
-                         screen_width - master_width, stack_height);
-        stack_y += stack_height;
+    if (window_count == 1) {
+        // Tek pencere varsa, çalışma alanını kapla
+        XMoveResizeWindow(display, ws->windows[0],
+                         work_x,
+                         work_y,
+                         work_width,
+                         work_height);
+        return;
     }
+
+    // Ana bölge genişliğini yüzdeye göre hesapla
+    int master_area_width = (int)((float)work_width * (master_size_percent / 100.0));
+
+    // Ana pencereyi yerleştir
+    XMoveResizeWindow(display, ws->windows[0],
+                     work_x,
+                     work_y,
+                     master_area_width - effective_inner_gap,
+                     work_height);
+    
+    // Yığın bölgesini hesapla
+    int stack_x = work_x + master_area_width + effective_inner_gap;
+    int stack_width = work_width - master_area_width - effective_inner_gap;
+    int stack_height = (work_height - ((window_count - 2) * effective_inner_gap)) / (window_count - 1);
+    
+    // Diğer pencereleri yığında düzenle
+    int stack_y = work_y;
+    for (int i = 1; i < window_count; i++) {
+        XMoveResizeWindow(display, ws->windows[i],
+                         stack_x,
+                         stack_y,
+                         stack_width,
+                         stack_height);
+        stack_y += stack_height + effective_inner_gap;
+    }
+
+    // Değişiklikleri hemen uygula
+    XSync(display, False);
 }
 
-// Ana bölge genişliğini ayarla
-void adjust_master_size(int delta) {
-    update_screen_dimensions();
-    
-    // Ana bölge genişliğini değiştir (sınırlar içinde)
-    int new_master_width = master_width + delta;
-    if (new_master_width < screen_width * 0.1) {
-        new_master_width = screen_width * 0.1;  // Minimum %10
-    } else if (new_master_width > screen_width * 0.9) {
-        new_master_width = screen_width * 0.9;  // Maksimum %90
+// Ana bölge genişliğini yüzdesel olarak ayarla
+void adjust_master_size(float delta_percent) {
+    if (window_mode != MODE_TILING) return;
+
+    // Yeni yüzdeyi hesapla
+    master_size_percent += delta_percent;
+
+    // Sınırları kontrol et (%10 ile %90 arası)
+    if (master_size_percent < 10.0) {
+        master_size_percent = 10.0;
+    } else if (master_size_percent > 90.0) {
+        master_size_percent = 90.0;
     }
-    
-    master_width = new_master_width;
-    printf("Ana bölge genişliği: %d piksel (%d%%)\n", 
-           master_width, (master_width * 100) / screen_width);
-    
+
+    // Piksel cinsinden genişliği hesapla
+    master_width = (int)((float)screen_width * (master_size_percent / 100.0));
+
+    printf("Ana bölge genişliği: %.1f%%\n", master_size_percent);
+
     // Pencereleri yeni boyutlara göre düzenle
     rearrange_windows();
 }
@@ -279,14 +319,28 @@ void handle_map_request(XMapRequestEvent *event) {
                 FocusChangeMask |
                 PropertyChangeMask |
                 StructureNotifyMask |
-                KeyPressMask);  // Klavye olaylarını da dinle
+                KeyPressMask);
     
-    // Pencere konumunu ve boyutunu ayarla
-    XMoveResizeWindow(display, event->window,
-                     attrs.x,
-                     attrs.y,
-                     attrs.width,
-                     attrs.height);
+    // Eğer bu workspace'teki ilk pencere ise merkeze konumlandır
+    if (workspaces[current_workspace].window_count == 0) {
+        // Ekran merkezini hesapla
+        int center_x = (screen_width - attrs.width) / 2;
+        int center_y = (screen_height - attrs.height) / 2;
+        
+        // Pencereyi merkeze taşı
+        XMoveResizeWindow(display, event->window,
+                         center_x,
+                         center_y,
+                         attrs.width,
+                         attrs.height);
+    } else {
+        // Diğer pencereler için normal konumlandırma
+        XMoveResizeWindow(display, event->window,
+                         attrs.x,
+                         attrs.y,
+                         attrs.width,
+                         attrs.height);
+    }
     
     // Pencereyi mevcut workspace'e ekle
     add_window_to_workspace(event->window, current_workspace);
@@ -542,6 +596,9 @@ void init_keybindings() {
     keys.volume_raise_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioRaiseVolume"));
     keys.volume_lower_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioLowerVolume"));
     keys.volume_mute_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioMute"));
+    keys.g_key = XKeysymToKeycode(display, XK_g);
+    keys.j_key = XKeysymToKeycode(display, XK_j);
+    keys.k_key = XKeysymToKeycode(display, XK_k);
 }
 
 // Tuş yakalama fonksiyonu
@@ -567,6 +624,13 @@ void grab_keys() {
         // Alt + Shift + 1-9 için
         XGrabKey(display, keycode, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
     }
+
+    // Boşlukları aç/kapa
+    XGrabKey(display, keys.g_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.j_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.k_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.j_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.k_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 }
 
 // Klavye olaylarını işle (güncellendi)
@@ -587,6 +651,14 @@ void handle_key_press(XKeyEvent *event) {
             // Alt + Shift + Enter: Terminal aç
             printf("Terminal açılıyor...\n");
             exec_command("xterm");
+        }
+        else if (event->keycode == keys.k_key) {
+            // Alt + Shift + k: Dış boşlukları artır
+            adjust_gaps(5, 0);
+        }
+        else if (event->keycode == keys.j_key) {
+            // Alt + Shift + j: Dış boşlukları azalt
+            adjust_gaps(-5, 0);
         }
     }
     // Sadece Alt tuşu kombinasyonlarını kontrol et
@@ -614,16 +686,28 @@ void handle_key_press(XKeyEvent *event) {
             toggle_tiling_mode();
         }
         else if (event->keycode == keys.h_key) {
-            // Alt + h: Ana bölge genişliğini azalt
-            adjust_master_size(-50);
+            // Alt + h: Ana bölgeyi %1 daralt (sola doğru)
+            adjust_master_size(-1.0);
         }
         else if (event->keycode == keys.l_key) {
-            // Alt + l: Ana bölge genişliğini arttır
-            adjust_master_size(50);
+            // Alt + l: Ana bölgeyi %1 genişlet (sağa doğru)
+            adjust_master_size(1.0);
         }
         else if (event->keycode == keys.return_key) {
             // Alt + Enter: Ana pencere ile değiştir
             swap_master();
+        }
+        else if (event->keycode == keys.g_key) {
+            // Alt + g: Boşlukları aç/kapa
+            toggle_gaps();
+        }
+        else if (event->keycode == keys.k_key) {
+            // Alt + k: İç boşlukları artır
+            adjust_gaps(0, 5);
+        }
+        else if (event->keycode == keys.j_key) {
+            // Alt + j: İç boşlukları azalt
+            adjust_gaps(0, -5);
         }
     }
     else if (event->keycode == keys.volume_raise_key) {
@@ -638,6 +722,31 @@ void handle_key_press(XKeyEvent *event) {
         // Ses kapatma tuşu
         exec_command("amixer set Master toggle");
     }
+}
+
+// Boşlukları aç/kapa
+void toggle_gaps() {
+    gaps_enabled = !gaps_enabled;
+    printf("Boşluklar %s\n", gaps_enabled ? "açıldı" : "kapatıldı");
+    rearrange_windows();
+}
+
+// Boşluk boyutlarını ayarla
+void adjust_gaps(int outer_delta, int inner_delta) {
+    if (!gaps_enabled) return;
+
+    // Dış boşlukları ayarla (minimum 0, maksimum 50 piksel)
+    outer_gap = outer_gap + outer_delta;
+    if (outer_gap < 0) outer_gap = 0;
+    if (outer_gap > 50) outer_gap = 50;
+
+    // İç boşlukları ayarla (minimum 0, maksimum 50 piksel)
+    inner_gap = inner_gap + inner_delta;
+    if (inner_gap < 0) inner_gap = 0;
+    if (inner_gap > 50) inner_gap = 50;
+
+    printf("Boşluklar güncellendi - Dış: %d, İç: %d\n", outer_gap, inner_gap);
+    rearrange_windows();
 }
 
 int main() {
@@ -678,8 +787,12 @@ int main() {
     printf("Alt + d: dmenu çalıştır\n");
     printf("Alt + q: Aktif pencereyi kapat\n");
     printf("Alt + t: Tiling/Floating mod değiştir\n");
-    printf("Alt + h/l: Ana bölge genişliğini azalt/arttır\n");
+    printf("Alt + l: Ana bölgeyi %%1 genişlet (sağa doğru)\n");
+    printf("Alt + h: Ana bölgeyi %%1 daralt (sola doğru)\n");
     printf("Alt + Enter: Ana pencere ile değiştir\n");
+    printf("Alt + g: Boşlukları aç/kapa\n");
+    printf("Alt + j/k: İç boşlukları azalt/artır\n");
+    printf("Alt + Shift + j/k: Dış boşlukları azalt/artır\n");
 
     // Ana döngü
     XEvent event;
