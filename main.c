@@ -87,6 +87,9 @@ typedef struct {
 // Global tuş kodları değişkeni
 KeyBindings keys;
 
+// Global değişken olarak ekle (diğer global değişkenlerin yanına)
+Cursor normal_cursor;
+
 // Tiling moduna geç
 void toggle_tiling_mode() {
     window_mode = window_mode == MODE_FLOATING ? MODE_TILING : MODE_FLOATING;
@@ -779,6 +782,10 @@ int main() {
     // Klavye olaylarını root pencereye yönlendir
     grab_keys();  // YENİ - Önceki tüm XGrabKey çağrıları yerine
 
+    // Normal fare işaretçisini oluştur
+    normal_cursor = XCreateFontCursor(display, XC_left_ptr);
+    XDefineCursor(display, root, normal_cursor);
+
     XSetErrorHandler(error_handler);
 
     printf("Pencere yöneticisi başlatıldı...\n");
@@ -831,6 +838,7 @@ int main() {
 
     // Program sonunda temizlik
     XUngrabKey(display, AnyKey, AnyModifier, root);
+    XFreeCursor(display, normal_cursor);
     XCloseDisplay(display);
     return 0;
 }
