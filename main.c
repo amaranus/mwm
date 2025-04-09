@@ -12,6 +12,7 @@
 // Workspace sabitleri
 #define NUM_WORKSPACES 9
 #define MAX_WINDOWS 100
+#define BORDER_WIDTH 2  // Pencere kenarlık kalınlığı
 
 // Tiling modu sabitleri
 #define MODE_FLOATING 0    // Serbest yerleşim
@@ -195,7 +196,11 @@ void rearrange_windows() {
 
 // Ana bölge genişliğini yüzdesel olarak ayarla
 void adjust_master_size(float delta_percent) {
-    if (window_mode != MODE_TILING) return;
+    // Eğer mevcut workspace tiling modunda değilse işlem yapma
+    if (workspaces[current_workspace].mode != MODE_TILING) {
+        printf("Master boyutu sadece tiling modunda ayarlanabilir\n");
+        return;
+    }
 
     // Yeni yüzdeyi hesapla
     master_size_percent += delta_percent;
@@ -323,15 +328,16 @@ void focus_window(Window window) {
 
     // Önceki odaklanmış pencereyi temizle
     if (focused_window != None) {
-        XSetWindowBorder(display, focused_window, 0x000000);
+        XSetWindowBorder(display, focused_window, 0x000000);  // Siyah kenarlık
+        XSetWindowBorderWidth(display, focused_window, BORDER_WIDTH);
     }
 
     // Yeni pencereyi odakla
     focused_window = window;
-    XSetWindowBorder(display, window, 0x4C7899);  // Mavi tonunda bir kenarlık
+    XSetWindowBorder(display, window, 0x4C7899);  // Mavi tonunda kenarlık
+    XSetWindowBorderWidth(display, window, BORDER_WIDTH);
     XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
-    XRaiseWindow(display, window);  // Pencereyi öne getir
-
+    XRaiseWindow(display, window);
 }
 
 // Yeni pencere oluşturma isteğini işle
@@ -350,6 +356,9 @@ void handle_map_request(XMapRequestEvent *event) {
                 PropertyChangeMask |
                 StructureNotifyMask |
                 KeyPressMask);
+    
+    // Kenarlık kalınlığını ayarla
+    XSetWindowBorderWidth(display, event->window, BORDER_WIDTH);
     
     // Eğer bu workspace'teki ilk pencere ise merkeze konumlandır
     if (workspaces[current_workspace].window_count == 0) {
@@ -438,7 +447,7 @@ void handle_configure_request(XConfigureRequestEvent *event) {
     changes.y = event->y;
     changes.width = event->width;
     changes.height = event->height;
-    changes.border_width = event->border_width;
+    changes.border_width = BORDER_WIDTH;  // Kenarlık kalınlığını sabitle
     changes.sibling = event->above;
     changes.stack_mode = event->detail;
     
