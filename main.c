@@ -8,6 +8,8 @@
 #include <sys/wait.h>
 #include <string.h>  // memset fonksiyonu için gerekli
 #include <sys/time.h>  // gettimeofday için
+#include <X11/Xatom.h>
+#include <X11/Xutil.h>
 
 // Workspace sabitleri
 #define NUM_WORKSPACES 9
@@ -22,6 +24,10 @@
 #define MASTER_SIZE  0.5   // Ana bölgenin ekran genişliğinin oranı
 #define OUTER_GAP 10    // Ekran kenarlarıyla pencereler arası boşluk
 #define INNER_GAP 10    // Pencereler arası boşluk
+
+// Bar sabitleri
+#define BAR_HEIGHT 24  // Bar yüksekliği
+#define BAR_POSITION_TOP 1  // 1: üstte, 0: altta
 
 // Fonksiyon prototipleri
 void focus_window(Window window);
@@ -105,6 +111,72 @@ Window notification_window = None;
 int notification_timeout = 1000;  // milisaniye cinsinden (1 saniye)
 unsigned long popup_timer = 0;  // Zamanlayıcı için
 
+// Bar için global değişkenler
+Window bar_window = None;
+int bar_exists = 0;
+int effective_screen_y;  // Bar'dan sonra başlayan ekran y koordinatı
+int effective_screen_height;  // Bar'dan geriye kalan ekran yüksekliği
+
+// Pencere tipini kontrol et
+int is_bar_window(Window window) {
+    XWindowAttributes attrs;
+    XGetWindowAttributes(display, window, &attrs);
+    
+    // _NET_WM_WINDOW_TYPE atomunu al
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    Atom window_type_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
+    Atom dock_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    
+    if (XGetWindowProperty(display, window, window_type_atom,
+                          0, 1, False, XA_ATOM, &actual_type,
+                          &actual_format, &nitems, &bytes_after,
+                          &data) == Success && data) {
+        Atom type = *(Atom*)data;
+        XFree(data);
+        if (type == dock_atom) {
+            return 1;
+        }
+    }
+    
+    // Pencere ismini kontrol et (polybar veya lemonbar için)
+    XClassHint class_hint;
+    if (XGetClassHint(display, window, &class_hint)) {
+        int is_bar = (strcmp(class_hint.res_class, "Polybar") == 0 ||
+                     strcmp(class_hint.res_class, "lemonbar") == 0);
+        XFree(class_hint.res_name);
+        XFree(class_hint.res_class);
+        return is_bar;
+    }
+    
+    return 0;
+}
+
+// Ekran boyutlarını bar'a göre güncelle
+void update_screen_dimensions_with_bar() {
+    Screen *screen = DefaultScreenOfDisplay(display);
+    screen_width = WidthOfScreen(screen);
+    screen_height = HeightOfScreen(screen);
+    
+    if (bar_exists) {
+        if (BAR_POSITION_TOP) {
+            effective_screen_y = BAR_HEIGHT;
+            effective_screen_height = screen_height - BAR_HEIGHT;
+        } else {
+            effective_screen_y = 0;
+            effective_screen_height = screen_height - BAR_HEIGHT;
+        }
+    } else {
+        effective_screen_y = 0;
+        effective_screen_height = screen_height;
+    }
+    
+    // Ana bölge genişliğini yüzdeye göre güncelle
+    master_width = (int)((float)screen_width * (master_size_percent / 100.0));
+}
+
 // Tiling moduna geç
 void toggle_tiling_mode() {
     // Aktif workspace'in modunu değiştir
@@ -142,7 +214,7 @@ void rearrange_windows() {
         return;
     }
     
-    update_screen_dimensions();
+    update_screen_dimensions_with_bar();
 
     // Boşlukları hesapla
     int effective_outer_gap = gaps_enabled ? outer_gap : 0;
@@ -150,9 +222,9 @@ void rearrange_windows() {
     
     // Çalışma alanını hesapla
     int work_x = effective_outer_gap;
-    int work_y = effective_outer_gap;
+    int work_y = effective_screen_y + effective_outer_gap;  // Bar'ı hesaba kat
     int work_width = screen_width - (2 * effective_outer_gap);
-    int work_height = screen_height - (2 * effective_outer_gap);
+    int work_height = effective_screen_height - (2 * effective_outer_gap);  // Bar'ı hesaba kat
     
     if (window_count == 1) {
         // Tek pencere varsa, çalışma alanını kapla
@@ -342,6 +414,30 @@ void focus_window(Window window) {
 
 // Yeni pencere oluşturma isteğini işle
 void handle_map_request(XMapRequestEvent *event) {
+ // Önce pencerenin bar olup olmadığını kontrol et
+    if (is_bar_window(event->window)) {
+        // Bar penceresini kaydet ve ekran boyutlarını güncelle
+        bar_window = event->window;
+        bar_exists = 1;
+        update_screen_dimensions_with_bar();
+        
+        // Bar'ı görünür yap ve yönet
+        XMapWindow(display, event->window);
+        XSelectInput(display, event->window,
+                    StructureNotifyMask | PropertyChangeMask);
+        
+        // Bar'ı her zaman en üstte tut
+        XWindowChanges changes;
+        changes.stack_mode = TopIf;
+        XConfigureWindow(display, event->window, CWStackMode, &changes);
+        
+        // Mevcut pencereleri yeni ekran boyutlarına göre düzenle
+        rearrange_windows();
+        
+        printf("Bar penceresi tanındı ve yapılandırıldı\n");
+        return;
+    }
+
     // Pencereyi görünür yap
     XMapWindow(display, event->window);
     
@@ -410,6 +506,15 @@ void handle_button_press(XButtonEvent *event) {
 
 // Pencere yok edildiğinde odağı temizle
 void handle_destroy_notify(XDestroyWindowEvent *event) {
+        // Bar penceresi yok edildiyse güncelle
+    if (event->window == bar_window) {
+        bar_window = None;
+        bar_exists = 0;
+        update_screen_dimensions_with_bar();
+        rearrange_windows();
+        printf("Bar penceresi kaldırıldı\n");
+        return;
+    }
     // Pencereyi mevcut workspace'den kaldır
     remove_window_from_workspace(event->window, current_workspace);
     
