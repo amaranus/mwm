@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <string.h>  // memset fonksiyonu için gerekli
+#include <sys/time.h>  // gettimeofday için
 
 // Workspace sabitleri
 #define NUM_WORKSPACES 9
@@ -39,6 +40,9 @@ void swap_master();
 void toggle_gaps();  // Bu satırı ekleyin
 void adjust_gaps(int outer_delta, int inner_delta);
 void focus_next_window();
+void create_notification_window();
+void show_workspace_notification(int workspace_num);
+void check_notification_timeout();
 
 // Fare ile sürükleme işlemi için gerekli değişkenler
 static int start_x, start_y;           // Sürükleme başlangıç koordinatları
@@ -94,6 +98,11 @@ KeyBindings keys;
 
 // Global değişken olarak ekle (diğer global değişkenlerin yanına)
 Cursor normal_cursor;
+
+// Bildirim penceresi için global değişkenler
+Window notification_window = None;
+int notification_timeout = 1000;  // milisaniye cinsinden (1 saniye)
+unsigned long popup_timer = 0;  // Zamanlayıcı için
 
 // Tiling moduna geç
 void toggle_tiling_mode() {
@@ -281,7 +290,6 @@ void switch_workspace(int new_workspace) {
         Window w = workspaces[current_workspace].windows[i];
         if (w != None) {
             XUnmapWindow(display, w);
-            printf("Pencere gizlendi: %ld\n", w);
         }
     }
 
@@ -293,11 +301,17 @@ void switch_workspace(int new_workspace) {
         Window w = workspaces[current_workspace].windows[i];
         if (w != None) {
             XMapWindow(display, w);
-            printf("Pencere gösterildi: %ld\n", w);
         }
     }
 
-    // Değişiklikleri hemen uygula
+    // Workspace değişiklik bildirimini göster
+    show_workspace_notification(current_workspace);
+
+    // Yeni workspace'in moduna göre pencereleri düzenle
+    if (workspaces[current_workspace].mode == MODE_TILING) {
+        rearrange_windows();
+    }
+
     XSync(display, False);
 }
 
@@ -535,9 +549,24 @@ void exec_command(const char *cmd) {
     // Ebeveyn süreç devam eder
 }
 
-// Aktif pencereyi kapat
+// Pencereyi kapat
 void close_window(Window window) {
     if (window == None || window == root) {
+        return;
+    }
+    
+    // Pencere mevcut workspace'te mi kontrol et
+    int window_in_current_workspace = 0;
+    for (int i = 0; i < workspaces[current_workspace].window_count; i++) {
+        if (workspaces[current_workspace].windows[i] == window) {
+            window_in_current_workspace = 1;
+            break;
+        }
+    }
+    
+    // Eğer pencere mevcut workspace'te değilse işlem yapma
+    if (!window_in_current_workspace) {
+        printf("Pencere %ld mevcut workspace'te değil, kapatma işlemi iptal edildi\n", window);
         return;
     }
     
@@ -552,7 +581,8 @@ void close_window(Window window) {
     ev.xclient.data.l[1] = CurrentTime;
     
     XSendEvent(display, window, False, NoEventMask, &ev);
-    printf("Pencere kapatma isteği gönderildi: %ld\n", window);
+    printf("Pencere kapatma isteği gönderildi: %ld (Workspace %d)\n", 
+           window, current_workspace + 1);
 }
 
 // Fonksiyon prototipi
@@ -663,7 +693,7 @@ void grab_keys() {
     XGrabKey(display, keys.tab_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 }
 
-// Klavye olaylarını işle (güncellendi)
+// Klavye olaylarını işle
 void handle_key_press(XKeyEvent *event) {
     KeySym keysym = XkbKeycodeToKeysym(display, event->keycode, 0, 0);
     
@@ -707,9 +737,9 @@ void handle_key_press(XKeyEvent *event) {
         else if (event->keycode == keys.q_key) {
             // Alt + q: Aktif pencereyi kapat
             if (focused_window != None) {
-                printf("Aktif pencere kapatılıyor: %ld\n", focused_window);
+                // Pencereyi kapat (workspace kontrolü close_window içinde yapılacak)
                 close_window(focused_window);
-            }        
+            }
         }
         else if (event->keycode == keys.t_key) {
             // Alt + t: Tiling modunu değiştir
@@ -817,6 +847,82 @@ void focus_next_window() {
            ws->windows[current_index], ws->windows[next_index]);
 }
 
+// Bildirim penceresini oluştur
+void create_notification_window() {
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.background_pixel = 0x2E3440;  // Nord Dark
+    attrs.border_pixel = 0x88C0D0;      // Nord Blue
+
+    // Ekran ortasında konumlandır
+    int width = 100;
+    int height = 50;
+    int x = (screen_width - width) / 2;
+    int y = (screen_height - height) / 2;
+
+    notification_window = XCreateWindow(display, root,
+                                     x, y, width, height,
+                                     2, // border width
+                                     DefaultDepth(display, DefaultScreen(display)),
+                                     CopyFromParent,
+                                     DefaultVisual(display, DefaultScreen(display)),
+                                     CWOverrideRedirect | CWBackPixel | CWBorderPixel,
+                                     &attrs);
+
+    XSelectInput(display, notification_window, ExposureMask);
+}
+
+// Bildirim penceresini göster
+void show_workspace_notification(int workspace_num) {
+    if (notification_window == None) {
+        create_notification_window();
+    }
+
+    // Pencereyi göster
+    XMapRaised(display, notification_window);
+
+    // Pencereyi çiz
+    XGCValues values;
+    GC gc = XCreateGC(display, notification_window, 0, &values);
+    XSetForeground(display, gc, 0xD8DEE9);  // Nord Light (text color)
+
+    char text[32];
+    snprintf(text, sizeof(text), "%d", workspace_num + 1);
+
+    // Metni ortala
+    XFontStruct* font = XLoadQueryFont(display, "fixed");
+    if (font) {
+        XSetFont(display, gc, font->fid);
+        int text_width = XTextWidth(font, text, strlen(text));
+        int x = (100 - text_width) / 2;  // 100 = window width
+        int y = (50 + (font->ascent - font->descent)) / 2;  // 50 = window height
+        XDrawString(display, notification_window, gc, x, y, text, strlen(text));
+        XFreeFont(display, font);
+    }
+
+    XFreeGC(display, gc);
+    XFlush(display);
+
+    // Zamanlayıcı ayarla
+    struct timeval current_time;
+    gettimeofday(&current_time, NULL);
+    popup_timer = (current_time.tv_sec * 1000) + (current_time.tv_usec / 1000);
+}
+
+// Bildirim penceresini kontrol et
+void check_notification_timeout() {
+    if (notification_window == None || popup_timer == 0) return;
+
+    struct timeval current_time;
+    gettimeofday(&current_time, NULL);
+    unsigned long current_ms = (current_time.tv_sec * 1000) + (current_time.tv_usec / 1000);
+
+    if (current_ms - popup_timer >= notification_timeout) {
+        XUnmapWindow(display, notification_window);
+        popup_timer = 0;
+    }
+}
+
 int main() {
     display = XOpenDisplay(NULL);
     if (!display) {
@@ -871,36 +977,49 @@ int main() {
     // Ana döngü
     XEvent event;
     while (1) {
-        XNextEvent(display, &event);
-        
-        switch (event.type) {
-            case MapRequest:
-                handle_map_request(&event.xmaprequest);
-                break;
-            case DestroyNotify:
-                handle_destroy_notify(&event.xdestroywindow);
-                break;
-            case ConfigureRequest:
-                handle_configure_request(&event.xconfigurerequest);
-                break;
-            case ButtonPress:
-                handle_button_press(&event.xbutton);
-                break;
-            case ButtonRelease:
-                stop_drag(&event.xbutton);
-                break;
-            case MotionNotify:
-                handle_motion(&event.xmotion);
-                break;
-            case KeyPress:
-                handle_key_press(&event.xkey);
-                break;
-            case EnterNotify:
-                if (event.xcrossing.mode == NotifyNormal) {
-                    focus_window(event.xcrossing.window);
-                }
-                break;
+        // Bildirim zamanlayıcısını kontrol et
+        check_notification_timeout();
+
+        while (XPending(display)) {
+            XNextEvent(display, &event);
+            
+            switch (event.type) {
+                case MapRequest:
+                    handle_map_request(&event.xmaprequest);
+                    break;
+                case DestroyNotify:
+                    handle_destroy_notify(&event.xdestroywindow);
+                    break;
+                case ConfigureRequest:
+                    handle_configure_request(&event.xconfigurerequest);
+                    break;
+                case ButtonPress:
+                    handle_button_press(&event.xbutton);
+                    break;
+                case ButtonRelease:
+                    stop_drag(&event.xbutton);
+                    break;
+                case MotionNotify:
+                    handle_motion(&event.xmotion);
+                    break;
+                case KeyPress:
+                    handle_key_press(&event.xkey);
+                    break;
+                case EnterNotify:
+                    if (event.xcrossing.mode == NotifyNormal) {
+                        focus_window(event.xcrossing.window);
+                    }
+                    break;
+                case Expose:
+                    if (event.xexpose.window == notification_window) {
+                        // Bildirim penceresini yeniden çiz
+                        show_workspace_notification(current_workspace);
+                    }
+                    break;
+            }
         }
+        
+        usleep(1000);  // CPU kullanımını azaltmak için kısa bekleme
     }
 
     // Program sonunda temizlik
