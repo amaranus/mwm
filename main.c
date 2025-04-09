@@ -38,6 +38,7 @@ void adjust_master_size(float delta_percent);
 void swap_master();
 void toggle_gaps();  // Bu satırı ekleyin
 void adjust_gaps(int outer_delta, int inner_delta);
+void focus_next_window();
 
 // Fare ile sürükleme işlemi için gerekli değişkenler
 static int start_x, start_y;           // Sürükleme başlangıç koordinatları
@@ -83,6 +84,9 @@ typedef struct {
     KeyCode g_key;          // Boşlukları aç/kapa
     KeyCode j_key;          // Boşlukları azalt
     KeyCode k_key;          // Boşlukları artır
+    KeyCode left_key;     // Sol ok tuşu
+    KeyCode right_key;    // Sağ ok tuşu
+    KeyCode tab_key;      // Tab tuşu
 } KeyBindings;
 
 // Global tuş kodları değişkeni
@@ -610,6 +614,9 @@ void init_keybindings() {
     keys.g_key = XKeysymToKeycode(display, XK_g);
     keys.j_key = XKeysymToKeycode(display, XK_j);
     keys.k_key = XKeysymToKeycode(display, XK_k);
+    keys.left_key = XKeysymToKeycode(display, XK_Left);
+    keys.right_key = XKeysymToKeycode(display, XK_Right);
+    keys.tab_key = XKeysymToKeycode(display, XK_Tab);
 }
 
 // Tuş yakalama fonksiyonu
@@ -642,6 +649,18 @@ void grab_keys() {
     XGrabKey(display, keys.k_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, keys.j_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, keys.k_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Sol ok tuşu
+    XGrabKey(display, keys.left_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.left_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Sağ ok tuşu
+    XGrabKey(display, keys.right_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.right_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Tab tuşu
+    XGrabKey(display, keys.tab_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.tab_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 }
 
 // Klavye olaylarını işle (güncellendi)
@@ -720,6 +739,20 @@ void handle_key_press(XKeyEvent *event) {
             // Alt + j: İç boşlukları azalt
             adjust_gaps(0, -5);
         }
+        else if (event->keycode == keys.left_key) {
+            // Alt + Sol: Önceki workspace'e git
+            int prev_workspace = (current_workspace - 1 + NUM_WORKSPACES) % NUM_WORKSPACES;
+            switch_workspace(prev_workspace);
+        }
+        else if (event->keycode == keys.right_key) {
+            // Alt + Sağ: Sonraki workspace'e git
+            int next_workspace = (current_workspace + 1) % NUM_WORKSPACES;
+            switch_workspace(next_workspace);
+        }
+        else if (event->keycode == keys.tab_key) {
+            // Alt + Tab: Bir sonraki pencereye odaklan
+            focus_next_window();
+        }
     }
     else if (event->keycode == keys.volume_raise_key) {
         // Ses açma tuşu
@@ -758,6 +791,30 @@ void adjust_gaps(int outer_delta, int inner_delta) {
 
     printf("Boşluklar güncellendi - Dış: %d, İç: %d\n", outer_gap, inner_gap);
     rearrange_windows();
+}
+
+// Workspace içinde bir sonraki pencereye geç
+void focus_next_window() {
+    Workspace *ws = &workspaces[current_workspace];
+    if (ws->window_count <= 1) return;  // Tek pencere varsa işlem yapma
+    
+    // Mevcut odaklanmış pencerenin indeksini bul
+    int current_index = -1;
+    for (int i = 0; i < ws->window_count; i++) {
+        if (ws->windows[i] == focused_window) {
+            current_index = i;
+            break;
+        }
+    }
+    
+    // Bir sonraki pencereyi hesapla (döngüsel olarak)
+    int next_index = (current_index + 1) % ws->window_count;
+    
+    // Yeni pencereye odaklan
+    focus_window(ws->windows[next_index]);
+    
+    printf("Pencere odağı değiştirildi: %ld -> %ld\n", 
+           ws->windows[current_index], ws->windows[next_index]);
 }
 
 int main() {
@@ -808,6 +865,8 @@ int main() {
     printf("Alt + g: Boşlukları aç/kapa\n");
     printf("Alt + j/k: İç boşlukları azalt/artır\n");
     printf("Alt + Shift + j/k: Dış boşlukları azalt/artır\n");
+    printf("Alt + Sol/Sağ: Önceki/Sonraki workspace'e geç\n");
+    printf("Alt + Tab: Workspace içinde pencereler arası geçiş yap\n");
 
     // Ana döngü
     XEvent event;
