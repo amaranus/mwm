@@ -36,7 +36,7 @@ void update_screen_dimensions();
 void toggle_tiling_mode();
 void adjust_master_size(float delta_percent);
 void swap_master();
-void toggle_gaps();
+void toggle_gaps();  // Bu satırı ekleyin
 void adjust_gaps(int outer_delta, int inner_delta);
 
 // Fare ile sürükleme işlemi için gerekli değişkenler
@@ -62,6 +62,7 @@ float master_size_percent = 50.0;  // Ana bölge genişliği yüzdesi (başlang�
 typedef struct {
     Window windows[MAX_WINDOWS];  // Bu workspace'teki pencereler
     int window_count;            // Pencere sayısı
+    int mode;                    // Bu workspace'in modu (MODE_FLOATING veya MODE_TILING)
 } Workspace;
 
 // Global workspace değişkenleri
@@ -92,10 +93,15 @@ Cursor normal_cursor;
 
 // Tiling moduna geç
 void toggle_tiling_mode() {
-    window_mode = window_mode == MODE_FLOATING ? MODE_TILING : MODE_FLOATING;
-    printf("Mod değiştirildi: %s\n", window_mode == MODE_FLOATING ? "Serbest" : "Döşeli");
+    // Aktif workspace'in modunu değiştir
+    workspaces[current_workspace].mode = 
+        workspaces[current_workspace].mode == MODE_FLOATING ? MODE_TILING : MODE_FLOATING;
     
-    // Mevcut workspace'teki tüm pencereleri yeniden düzenle
+    printf("Workspace %d modu değiştirildi: %s\n", 
+           current_workspace + 1,
+           workspaces[current_workspace].mode == MODE_FLOATING ? "Serbest" : "Döşeli");
+    
+    // Mevcut workspace'teki pencereleri yeniden düzenle
     rearrange_windows();
 }
 
@@ -110,13 +116,14 @@ void update_screen_dimensions() {
 
 // Aktif workspace'teki pencereleri düzenle
 void rearrange_windows() {
-    if (window_mode == MODE_FLOATING) {
+    Workspace *ws = &workspaces[current_workspace];
+    
+    // Eğer bu workspace serbest modda ise düzenleme yapma
+    if (ws->mode == MODE_FLOATING) {
         return;
     }
     
-    Workspace *ws = &workspaces[current_workspace];
     int window_count = ws->window_count;
-    
     if (window_count == 0) {
         return;
     }
@@ -219,6 +226,7 @@ void swap_master() {
 void init_workspaces() {
     for (int i = 0; i < NUM_WORKSPACES; i++) {
         workspaces[i].window_count = 0;
+        workspaces[i].mode = MODE_FLOATING;  // Başlangıçta serbest mod
         for (int j = 0; j < MAX_WINDOWS; j++) {
             workspaces[i].windows[j] = None;
         }
@@ -305,6 +313,7 @@ void focus_window(Window window) {
     XSetWindowBorder(display, window, 0x4C7899);  // Mavi tonunda bir kenarlık
     XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
     XRaiseWindow(display, window);  // Pencereyi öne getir
+
 }
 
 // Yeni pencere oluşturma isteğini işle
@@ -349,7 +358,7 @@ void handle_map_request(XMapRequestEvent *event) {
     add_window_to_workspace(event->window, current_workspace);
     
     // Döşeli modda pencereleri yeniden düzenle
-    if (window_mode == MODE_TILING) {
+    if (workspaces[current_workspace].mode == MODE_TILING) {
         rearrange_windows();
     }
     
@@ -378,7 +387,7 @@ void handle_destroy_notify(XDestroyWindowEvent *event) {
     remove_window_from_workspace(event->window, current_workspace);
     
     // Pencereler kaldırıldıktan sonra yeniden düzenle
-    if (window_mode == MODE_TILING) {
+    if (workspaces[current_workspace].mode == MODE_TILING) {
         rearrange_windows();
     }
     
@@ -566,21 +575,20 @@ void move_window_to_workspace(Window window, int from_ws, int to_ws) {
         XMapWindow(display, window);
     }
     
-    // Döşeme modunda eski ve yeni workspace'teki pencereleri düzenle
-    if (window_mode == MODE_TILING) {
+    // Her workspace'in kendi moduna göre düzenleme yap
+    if (workspaces[from_ws].mode == MODE_TILING) {
         // Geçici olarak workspace'i değiştir ve düzenle
         int temp_ws = current_workspace;
-        
-        if (from_ws != current_workspace) {
-            current_workspace = from_ws;
-            rearrange_windows();
-        }
-        
-        if (to_ws != from_ws) {
-            current_workspace = to_ws;
-            rearrange_windows();
-        }
-        
+        current_workspace = from_ws;
+        rearrange_windows();
+        current_workspace = temp_ws;
+    }
+    
+    if (workspaces[to_ws].mode == MODE_TILING && to_ws != from_ws) {
+        // Geçici olarak workspace'i değiştir ve düzenle
+        int temp_ws = current_workspace;
+        current_workspace = to_ws;
+        rearrange_windows();
         current_workspace = temp_ws;
     }
     
