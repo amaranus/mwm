@@ -26,7 +26,7 @@
 #define INNER_GAP 10    // Pencereler arası boşluk
 
 // Bar sabitleri
-#define BAR_HEIGHT 24  // Bar yüksekliği
+#define BAR_HEIGHT 30  // Bar yüksekliği
 #define BAR_POSITION_TOP 1  // 1: üstte, 0: altta
 
 // Fonksiyon prototipleri
@@ -50,6 +50,9 @@ void focus_next_window();
 void create_notification_window();
 void show_workspace_notification(int workspace_num);
 void check_notification_timeout();
+void init_atoms();
+void update_workspace_properties();
+void handle_strut_properties(Window window);
 
 // Fare ile sürükleme işlemi için gerekli değişkenler
 static int start_x, start_y;           // Sürükleme başlangıç koordinatları
@@ -116,6 +119,20 @@ Window bar_window = None;
 int bar_exists = 0;
 int effective_screen_y;  // Bar'dan sonra başlayan ekran y koordinatı
 int effective_screen_height;  // Bar'dan geriye kalan ekran yüksekliği
+
+// EWMH Atomları için global değişkenler
+Atom _NET_WM_WINDOW_TYPE;
+Atom _NET_WM_WINDOW_TYPE_DOCK;
+Atom _NET_WM_DESKTOP;
+Atom _NET_CURRENT_DESKTOP;
+Atom _NET_NUMBER_OF_DESKTOPS;
+Atom _NET_CLIENT_LIST;
+Atom _NET_ACTIVE_WINDOW;
+Atom _NET_WM_STRUT_PARTIAL;
+Atom _NET_WM_STRUT;
+Atom _NET_WM_STATE;
+Atom _NET_WM_STATE_DEMANDS_ATTENTION;
+Atom _NET_SUPPORTED;
 
 // Pencere tipini kontrol et
 int is_bar_window(Window window) {
@@ -390,6 +407,9 @@ void switch_workspace(int new_workspace) {
     }
 
     XSync(display, False);
+
+    // EWMH özelliklerini güncelle
+    update_workspace_properties();
 }
 
 // Pencereyi odakla
@@ -410,11 +430,14 @@ void focus_window(Window window) {
     XSetWindowBorderWidth(display, window, BORDER_WIDTH);
     XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
     XRaiseWindow(display, window);
+
+    // EWMH özelliklerini güncelle
+    update_workspace_properties();
 }
 
 // Yeni pencere oluşturma isteğini işle
 void handle_map_request(XMapRequestEvent *event) {
- // Önce pencerenin bar olup olmadığını kontrol et
+    // Önce pencerenin bar olup olmadığını kontrol et
     if (is_bar_window(event->window)) {
         // Bar penceresini kaydet ve ekran boyutlarını güncelle
         bar_window = event->window;
@@ -489,6 +512,14 @@ void handle_map_request(XMapRequestEvent *event) {
     focus_window(event->window);
     
     printf("Yeni pencere workspace %d'e eklendi: %ld\n", current_workspace + 1, event->window);
+
+    // Pencereye workspace özelliğini ata
+    long desktop = current_workspace;
+    XChangeProperty(display, event->window, _NET_WM_DESKTOP, XA_CARDINAL, 32,
+                   PropModeReplace, (unsigned char *)&desktop, 1);
+
+    // EWMH özelliklerini güncelle
+    update_workspace_properties();
 }
 
 // Pencere tıklama olayını işle
@@ -506,7 +537,7 @@ void handle_button_press(XButtonEvent *event) {
 
 // Pencere yok edildiğinde odağı temizle
 void handle_destroy_notify(XDestroyWindowEvent *event) {
-        // Bar penceresi yok edildiyse güncelle
+    // Bar penceresi yok edildiyse güncelle
     if (event->window == bar_window) {
         bar_window = None;
         bar_exists = 0;
@@ -715,7 +746,12 @@ void move_window_to_workspace(Window window, int from_ws, int to_ws) {
     
     // Pencereyi yeni workspace'e ekle
     add_window_to_workspace(window, to_ws);
-    
+
+     // Pencerenin _NET_WM_DESKTOP özelliğini güncelle
+    long desktop = to_ws;
+    XChangeProperty(display, window, _NET_WM_DESKTOP, XA_CARDINAL, 32,
+                   PropModeReplace, (unsigned char *)&desktop, 1);
+        
     // Aktif workspace değiştiyse, pencereyi sakla/göster
     if (current_workspace != to_ws) {
         XUnmapWindow(display, window);
@@ -739,6 +775,24 @@ void move_window_to_workspace(Window window, int from_ws, int to_ws) {
         rearrange_windows();
         current_workspace = temp_ws;
     }
+
+    // EWMH özelliklerini güncelle
+    update_workspace_properties();
+    
+    // Pencere listesini güncelle
+    Window client_list[MAX_WINDOWS * NUM_WORKSPACES];
+    int client_count = 0;
+    
+    // Tüm workspace'lerdeki pencereleri topla
+    for (int i = 0; i < NUM_WORKSPACES; i++) {
+        for (int j = 0; j < workspaces[i].window_count; j++) {
+            client_list[client_count++] = workspaces[i].windows[j];
+        }
+    }
+    
+    // _NET_CLIENT_LIST özelliğini güncelle
+    XChangeProperty(display, root, _NET_CLIENT_LIST, XA_WINDOW, 32,
+                   PropModeReplace, (unsigned char *)client_list, client_count);
     
     printf("Pencere %ld workspace %d'den %d'e taşındı\n", 
            window, from_ws + 1, to_ws + 1);
@@ -1037,6 +1091,156 @@ void check_notification_timeout() {
     }
 }
 
+void init_atoms() {
+    _NET_WM_WINDOW_TYPE = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
+    _NET_WM_WINDOW_TYPE_DOCK = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    _NET_WM_DESKTOP = XInternAtom(display, "_NET_WM_DESKTOP", False);
+    _NET_CURRENT_DESKTOP = XInternAtom(display, "_NET_CURRENT_DESKTOP", False);
+    _NET_NUMBER_OF_DESKTOPS = XInternAtom(display, "_NET_NUMBER_OF_DESKTOPS", False);
+    _NET_CLIENT_LIST = XInternAtom(display, "_NET_CLIENT_LIST", False);
+    _NET_ACTIVE_WINDOW = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+    _NET_WM_STRUT_PARTIAL = XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False);
+    _NET_WM_STRUT = XInternAtom(display, "_NET_WM_STRUT", False);
+    _NET_WM_STATE = XInternAtom(display, "_NET_WM_STATE", False);
+    _NET_WM_STATE_DEMANDS_ATTENTION = XInternAtom(display, "_NET_WM_STATE_DEMANDS_ATTENTION", False);
+    _NET_SUPPORTED = XInternAtom(display, "_NET_SUPPORTED", False);
+
+}
+
+void set_supported_hints() {
+    Atom supported[] = {
+        _NET_WM_STATE,
+        _NET_WM_STATE_DEMANDS_ATTENTION,
+        _NET_WM_DESKTOP,
+        _NET_CURRENT_DESKTOP,
+        _NET_NUMBER_OF_DESKTOPS,
+        _NET_CLIENT_LIST,
+        _NET_ACTIVE_WINDOW,
+        _NET_WM_WINDOW_TYPE,
+        _NET_WM_WINDOW_TYPE_DOCK
+    };
+    
+    XChangeProperty(display, root, _NET_SUPPORTED, XA_ATOM, 32,
+                   PropModeReplace, (unsigned char *)supported,
+                   sizeof(supported) / sizeof(Atom));
+}
+
+void handle_client_message(XClientMessageEvent *event) {
+    if (event->message_type == _NET_CURRENT_DESKTOP) {
+        // Workspace değiştirme isteği
+        int new_workspace = event->data.l[0];
+        if (new_workspace >= 0 && new_workspace < NUM_WORKSPACES) {
+            switch_workspace(new_workspace);
+        }
+    }
+    else if (event->message_type == _NET_ACTIVE_WINDOW) {
+        // Pencere aktifleştirme isteği
+        Window window = event->window;
+        // Pencereyi bul ve aktifleştir
+        for (int i = 0; i < NUM_WORKSPACES; i++) {
+            for (int j = 0; j < workspaces[i].window_count; j++) {
+                if (workspaces[i].windows[j] == window) {
+                    // Eğer pencere başka bir workspace'te ise, o workspace'e geç
+                    if (i != current_workspace) {
+                        switch_workspace(i);
+                    }
+                    focus_window(window);
+                    return;
+                }
+            }
+        }
+    }
+    else if (event->message_type == _NET_WM_STATE) {
+        // Pencere durumu değiştirme isteği
+        // (şimdilik sadece _NET_WM_STATE_DEMANDS_ATTENTION için)
+        if (event->data.l[1] == _NET_WM_STATE_DEMANDS_ATTENTION ||
+            event->data.l[2] == _NET_WM_STATE_DEMANDS_ATTENTION) {
+            // İsteğe bağlı: Dikkat çekme durumunu işle
+        }
+    }
+}
+
+void update_workspace_properties() {
+    // Mevcut workspace'i güncelle
+    long data = current_workspace;
+    XChangeProperty(display, root, _NET_CURRENT_DESKTOP, XA_CARDINAL, 32,
+                   PropModeReplace, (unsigned char *)&data, 1);
+
+    // Toplam workspace sayısını güncelle
+    data = NUM_WORKSPACES;
+    XChangeProperty(display, root, _NET_NUMBER_OF_DESKTOPS, XA_CARDINAL, 32,
+                   PropModeReplace, (unsigned char *)&data, 1);
+
+    // Aktif pencereyi güncelle
+    if (focused_window != None) {
+        XChangeProperty(display, root, _NET_ACTIVE_WINDOW, XA_WINDOW, 32,
+                       PropModeReplace, (unsigned char *)&focused_window, 1);
+    }
+
+    // Pencere listesini güncelle
+    Window client_list[MAX_WINDOWS * NUM_WORKSPACES];
+    int client_count = 0;
+    
+    // Her workspace'teki pencereleri ekle
+    for (int i = 0; i < NUM_WORKSPACES; i++) {
+        for (int j = 0; j < workspaces[i].window_count; j++) {
+            Window win = workspaces[i].windows[j];
+            client_list[client_count++] = win;
+            
+            // Her pencere için workspace bilgisini güncelle
+            long desktop = i;
+            XChangeProperty(display, win, _NET_WM_DESKTOP, XA_CARDINAL, 32,
+                          PropModeReplace, (unsigned char *)&desktop, 1);
+        }
+    }
+    
+    XChangeProperty(display, root, _NET_CLIENT_LIST, XA_WINDOW, 32,
+                   PropModeReplace, (unsigned char *)client_list, client_count);
+    // Değişiklikleri hemen uygula
+    XSync(display, False);
+}
+
+void handle_strut_properties(Window window) {
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    
+    // Önce _NET_WM_STRUT_PARTIAL'ı kontrol et
+    if (XGetWindowProperty(display, window, _NET_WM_STRUT_PARTIAL,
+                          0, 12, False, XA_CARDINAL, &actual_type,
+                          &actual_format, &nitems, &bytes_after,
+                          &data) == Success && data) {
+        long *struts = (long *)data;
+        if (nitems == 12) {
+            // Strut değerlerini işle
+            if (struts[2] > 0) {  // Top strut
+                effective_screen_y = struts[2];
+                effective_screen_height = screen_height - struts[2];
+            } else if (struts[3] > 0) {  // Bottom strut
+                effective_screen_height = screen_height - struts[3];
+            }
+        }
+        XFree(data);
+    }
+    // Sonra _NET_WM_STRUT'u kontrol et
+    else if (XGetWindowProperty(display, window, _NET_WM_STRUT,
+                               0, 4, False, XA_CARDINAL, &actual_type,
+                               &actual_format, &nitems, &bytes_after,
+                               &data) == Success && data) {
+        long *struts = (long *)data;
+        if (nitems == 4) {
+            if (struts[2] > 0) {  // Top strut
+                effective_screen_y = struts[2];
+                effective_screen_height = screen_height - struts[2];
+            } else if (struts[3] > 0) {  // Bottom strut
+                effective_screen_height = screen_height - struts[3];
+            }
+        }
+        XFree(data);
+    }
+}
+
 int main() {
     display = XOpenDisplay(NULL);
     if (!display) {
@@ -1062,6 +1266,7 @@ int main() {
                 ButtonPressMask |
                 ButtonReleaseMask |
                 PointerMotionMask |
+                PropertyChangeMask | 
                 KeyPressMask);
 
     // Klavye olaylarını root pencereye yönlendir
@@ -1088,6 +1293,15 @@ int main() {
     printf("Alt + Sol/Sağ: Önceki/Sonraki workspace'e geç\n");
     printf("Alt + Tab: Workspace içinde pencereler arası geçiş yap\n");
 
+    // EWMH atomlarını başlat
+    init_atoms();
+
+    // Desteklenen özellikleri bildir
+    set_supported_hints();
+    
+    // İlk workspace özelliklerini ayarla
+    update_workspace_properties();
+
     // Ana döngü
     XEvent event;
     while (1) {
@@ -1098,6 +1312,9 @@ int main() {
             XNextEvent(display, &event);
             
             switch (event.type) {
+                 case ClientMessage:
+                    handle_client_message(&event.xclient);
+                    break;
                 case MapRequest:
                     handle_map_request(&event.xmaprequest);
                     break;
