@@ -1,3 +1,4 @@
+#include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>  // Klavye tuşları için
@@ -12,7 +13,7 @@
 #include <X11/Xutil.h>
 
 // Workspace sabitleri
-#define NUM_WORKSPACES 9
+#define NUM_WORKSPACES 5
 #define MAX_WINDOWS 100
 #define BORDER_WIDTH 2  // Pencere kenarlık kalınlığı
 
@@ -24,6 +25,14 @@
 #define MASTER_SIZE  0.5   // Ana bölgenin ekran genişliğinin oranı
 #define OUTER_GAP 10    // Ekran kenarlarıyla pencereler arası boşluk
 #define INNER_GAP 10    // Pencereler arası boşluk
+#define TERMINAL "alacritty" // Terminal programı
+#define LAUNCHER "dmenu_run -l 10 -p 'Uygulama seç:' -fn 'Terminus-13' -nb '#353535' -sb '#0a0a0a'" // Uygulama seçici
+#define WS_NOTIFICATION_BG 0x353535 // Workspace notification background color
+#define WS_NOTIFICATION_FG 0xD8DEE9 // Workspace notification foreground color
+#define WS_NOTIFICATION_BORDER 0x88C0D0 // Workspace notification border color
+#define ACTIVE_WINDOW_BORDER_FG 0x4C7899
+#define WINDOW_BORDER_FG 0x000000
+#define MODKEY Mod1Mask
 
 // Bar sabitleri
 #define BAR_HEIGHT 30  // Bar yüksekliği
@@ -53,6 +62,7 @@ void check_notification_timeout();
 void init_atoms();
 void update_workspace_properties();
 void handle_strut_properties(Window window);
+void move_window_to_workspace(Window window, int from_ws, int to_ws);
 
 // Fare ile sürükleme işlemi için gerekli değişkenler
 static int start_x, start_y;           // Sürükleme başlangıç koordinatları
@@ -86,25 +96,128 @@ int current_workspace = 0;  // Aktif workspace (0-8)
 
 // Tuş kodları için yapı tanımı
 typedef struct {
+    KeyCode a_key;
+    KeyCode b_key;
+    KeyCode c_key;
     KeyCode d_key;
-    KeyCode q_key;
-    KeyCode t_key;
+    KeyCode e_key;
+    KeyCode f_key;
+    KeyCode g_key;          
     KeyCode h_key;
+    KeyCode i_key;
+    KeyCode j_key;         
+    KeyCode k_key;        
     KeyCode l_key;
+    KeyCode m_key;
+    KeyCode n_key;
+    KeyCode o_key;
+    KeyCode p_key;
+    KeyCode q_key;
+    KeyCode r_key;
+    KeyCode s_key;
+    KeyCode t_key;
+    KeyCode u_key;
+    KeyCode v_key;
+    KeyCode w_key;
+    KeyCode x_key;
+    KeyCode y_key;
+    KeyCode z_key;
     KeyCode return_key;
     KeyCode volume_raise_key;
     KeyCode volume_lower_key;
     KeyCode volume_mute_key;
-    KeyCode g_key;          // Boşlukları aç/kapa
-    KeyCode j_key;          // Boşlukları azalt
-    KeyCode k_key;          // Boşlukları artır
-    KeyCode left_key;     // Sol ok tuşu
-    KeyCode right_key;    // Sağ ok tuşu
-    KeyCode tab_key;      // Tab tuşu
+    KeyCode left_key;    
+    KeyCode right_key;   
+    KeyCode up_key;  
+    KeyCode down_key;
+    KeyCode tab_key;
 } KeyBindings;
 
 // Global tuş kodları değişkeni
 KeyBindings keys;
+
+// Tuş kodlarını başlat fonksiyonu (main içinde çağrılacak)
+void init_keybindings() {
+    keys.a_key = XKeysymToKeycode(display, XK_a);
+    keys.b_key = XKeysymToKeycode(display, XK_b);
+    keys.c_key = XKeysymToKeycode(display, XK_c);
+    keys.d_key = XKeysymToKeycode(display, XK_d);
+    keys.e_key = XKeysymToKeycode(display, XK_e);
+    keys.f_key = XKeysymToKeycode(display, XK_f);
+    keys.g_key = XKeysymToKeycode(display, XK_g);
+    keys.h_key = XKeysymToKeycode(display, XK_h);
+    keys.i_key = XKeysymToKeycode(display, XK_i);
+    keys.j_key = XKeysymToKeycode(display, XK_j);
+    keys.k_key = XKeysymToKeycode(display, XK_k);
+    keys.l_key = XKeysymToKeycode(display, XK_l);
+    keys.m_key = XKeysymToKeycode(display, XK_m);
+    keys.n_key = XKeysymToKeycode(display, XK_n);
+    keys.o_key = XKeysymToKeycode(display, XK_o);
+    keys.p_key = XKeysymToKeycode(display, XK_p);
+    keys.q_key = XKeysymToKeycode(display, XK_q);
+    keys.r_key = XKeysymToKeycode(display, XK_r);
+    keys.s_key = XKeysymToKeycode(display, XK_s);
+    keys.t_key = XKeysymToKeycode(display, XK_t);
+    keys.u_key = XKeysymToKeycode(display, XK_u);
+    keys.v_key = XKeysymToKeycode(display, XK_v);
+    keys.w_key = XKeysymToKeycode(display, XK_w);
+    keys.x_key = XKeysymToKeycode(display, XK_x);
+    keys.y_key = XKeysymToKeycode(display, XK_y);
+    keys.z_key = XKeysymToKeycode(display, XK_z);    
+    keys.return_key = XKeysymToKeycode(display, XK_Return);
+    keys.volume_raise_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioRaiseVolume"));
+    keys.volume_lower_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioLowerVolume"));
+    keys.volume_mute_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioMute"));
+    keys.left_key = XKeysymToKeycode(display, XK_Left);
+    keys.right_key = XKeysymToKeycode(display, XK_Right);
+    keys.up_key = XKeysymToKeycode(display, XK_Up);
+    keys.down_key = XKeysymToKeycode(display, XK_Down);
+    keys.tab_key = XKeysymToKeycode(display, XK_Tab);
+}
+
+// Tuş yakalama fonksiyonu
+void grab_keys() {
+    // Alt + tuş kombinasyonları
+    XGrabKey(display, keys.d_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.q_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.t_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.h_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.l_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.return_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.return_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    
+    // Ses tuşları (modifikatör olmadan)
+    XGrabKey(display, keys.volume_raise_key, 0, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.volume_lower_key, 0, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.volume_mute_key, 0, root, True, GrabModeAsync, GrabModeAsync);
+    
+    // Alt + 1-9 tuşları
+    for (int i = XK_1; i <= XK_9; i++) {
+        KeyCode keycode = XKeysymToKeycode(display, i);
+        XGrabKey(display, keycode, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+        // Alt + Shift + 1-9 için
+        XGrabKey(display, keycode, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    }
+
+    // Boşlukları aç/kapa
+    XGrabKey(display, keys.g_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.j_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.j_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.k_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.k_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Sol ok tuşu
+    XGrabKey(display, keys.left_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.left_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Sağ ok tuşu
+    XGrabKey(display, keys.right_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.right_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Tab tuşu
+    XGrabKey(display, keys.tab_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.tab_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+}
 
 // Global değişken olarak ekle (diğer global değişkenlerin yanına)
 Cursor normal_cursor;
@@ -420,13 +533,13 @@ void focus_window(Window window) {
 
     // Önceki odaklanmış pencereyi temizle
     if (focused_window != None) {
-        XSetWindowBorder(display, focused_window, 0x000000);  // Siyah kenarlık
+        XSetWindowBorder(display, focused_window, WINDOW_BORDER_FG);  // Siyah kenarlık
         XSetWindowBorderWidth(display, focused_window, BORDER_WIDTH);
     }
 
     // Yeni pencereyi odakla
     focused_window = window;
-    XSetWindowBorder(display, window, 0x4C7899);  // Mavi tonunda kenarlık
+    XSetWindowBorder(display, window, ACTIVE_WINDOW_BORDER_FG);  // Mavi tonunda kenarlık
     XSetWindowBorderWidth(display, window, BORDER_WIDTH);
     XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
     XRaiseWindow(display, window);
@@ -730,9 +843,6 @@ void close_window(Window window) {
            window, current_workspace + 1);
 }
 
-// Fonksiyon prototipi
-void move_window_to_workspace(Window window, int from_ws, int to_ws);
-
 // Pencereyi başka bir workspace'e taşı
 void move_window_to_workspace(Window window, int from_ws, int to_ws) {
     if (from_ws < 0 || from_ws >= NUM_WORKSPACES ||
@@ -798,75 +908,14 @@ void move_window_to_workspace(Window window, int from_ws, int to_ws) {
            window, from_ws + 1, to_ws + 1);
 }
 
-// Tuş kodlarını başlat fonksiyonu (main içinde çağrılacak)
-void init_keybindings() {
-    keys.d_key = XKeysymToKeycode(display, XK_d);
-    keys.q_key = XKeysymToKeycode(display, XK_q);
-    keys.t_key = XKeysymToKeycode(display, XK_t);
-    keys.h_key = XKeysymToKeycode(display, XK_h);
-    keys.l_key = XKeysymToKeycode(display, XK_l);
-    keys.return_key = XKeysymToKeycode(display, XK_Return);
-    keys.volume_raise_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioRaiseVolume"));
-    keys.volume_lower_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioLowerVolume"));
-    keys.volume_mute_key = XKeysymToKeycode(display, XStringToKeysym("XF86AudioMute"));
-    keys.g_key = XKeysymToKeycode(display, XK_g);
-    keys.j_key = XKeysymToKeycode(display, XK_j);
-    keys.k_key = XKeysymToKeycode(display, XK_k);
-    keys.left_key = XKeysymToKeycode(display, XK_Left);
-    keys.right_key = XKeysymToKeycode(display, XK_Right);
-    keys.tab_key = XKeysymToKeycode(display, XK_Tab);
-}
 
-// Tuş yakalama fonksiyonu
-void grab_keys() {
-    // Alt + tuş kombinasyonları
-    XGrabKey(display, keys.d_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.q_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.t_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.h_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.l_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.return_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.return_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-    
-    // Ses tuşları (modifikatör olmadan)
-    XGrabKey(display, keys.volume_raise_key, 0, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.volume_lower_key, 0, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.volume_mute_key, 0, root, True, GrabModeAsync, GrabModeAsync);
-    
-    // Alt + 1-9 tuşları
-    for (int i = XK_1; i <= XK_9; i++) {
-        KeyCode keycode = XKeysymToKeycode(display, i);
-        XGrabKey(display, keycode, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-        // Alt + Shift + 1-9 için
-        XGrabKey(display, keycode, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-    }
-
-    // Boşlukları aç/kapa
-    XGrabKey(display, keys.g_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.j_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.k_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.j_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.k_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-
-    // Sol ok tuşu
-    XGrabKey(display, keys.left_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.left_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-
-    // Sağ ok tuşu
-    XGrabKey(display, keys.right_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.right_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-
-    // Tab tuşu
-    XGrabKey(display, keys.tab_key, Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
-    XGrabKey(display, keys.tab_key, Mod1Mask | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
-}
 
 // Klavye olaylarını işle
 void handle_key_press(XKeyEvent *event) {
     KeySym keysym = XkbKeycodeToKeysym(display, event->keycode, 0, 0);
     
     // Alt+Shift kombinasyonlarını kontrol et
-    if ((event->state & Mod1Mask) && (event->state & ShiftMask)) {
+    if ((event->state & MODKEY) && (event->state & ShiftMask)) {
         if (keysym >= XK_1 && keysym <= XK_9) {
             // Alt + Shift + 1-9: Aktif pencereyi başka workspace'e taşı
             if (focused_window != None) {
@@ -878,7 +927,7 @@ void handle_key_press(XKeyEvent *event) {
         else if (event->keycode == keys.return_key) {
             // Alt + Shift + Enter: Terminal aç
             printf("Terminal açılıyor...\n");
-            exec_command("xterm");
+            exec_command(TERMINAL);
         }
         else if (event->keycode == keys.k_key) {
             // Alt + Shift + k: Dış boşlukları artır
@@ -888,9 +937,13 @@ void handle_key_press(XKeyEvent *event) {
             // Alt + Shift + j: Dış boşlukları azalt
             adjust_gaps(-5, 0);
         }
+        else if (event->keycode == keys.q_key) {
+            // X oturumunu kapat
+            exec_command("pkill X");
+        }
     }
     // Sadece Alt tuşu kombinasyonlarını kontrol et
-    else if (event->state & Mod1Mask) {
+    else if (event->state & MODKEY) {
         if (keysym >= XK_1 && keysym <= XK_9) {
             // Alt + 1-9: Workspace değiştir
             int workspace = keysym - XK_1;
@@ -900,7 +953,7 @@ void handle_key_press(XKeyEvent *event) {
         else if (event->keycode == keys.d_key) {
             // Alt + d: dmenu çalıştır
             printf("dmenu çalıştırılıyor...\n");
-            exec_command("dmenu_run -l 10 -p 'Uygulama seç:' -fn 'Terminus-13' -nb '#242933' -sb '#1b1f26'");
+            exec_command(LAUNCHER);
         }
         else if (event->keycode == keys.q_key) {
             // Alt + q: Aktif pencereyi kapat
@@ -1019,8 +1072,8 @@ void focus_next_window() {
 void create_notification_window() {
     XSetWindowAttributes attrs;
     attrs.override_redirect = True;
-    attrs.background_pixel = 0x2E3440;  // Nord Dark
-    attrs.border_pixel = 0x88C0D0;      // Nord Blue
+    attrs.background_pixel = WS_NOTIFICATION_BG; 
+    attrs.border_pixel = WS_NOTIFICATION_BORDER;
 
     // Ekran ortasında konumlandır
     int width = 100;
@@ -1052,7 +1105,7 @@ void show_workspace_notification(int workspace_num) {
     // Pencereyi çiz
     XGCValues values;
     GC gc = XCreateGC(display, notification_window, 0, &values);
-    XSetForeground(display, gc, 0xD8DEE9);  // Nord Light (text color)
+    XSetForeground(display, gc, WS_NOTIFICATION_FG);
 
     char text[32];
     snprintf(text, sizeof(text), "%d", workspace_num + 1);
@@ -1292,6 +1345,8 @@ int main() {
     printf("Alt + Shift + j/k: Dış boşlukları azalt/artır\n");
     printf("Alt + Sol/Sağ: Önceki/Sonraki workspace'e geç\n");
     printf("Alt + Tab: Workspace içinde pencereler arası geçiş yap\n");
+    printf("Alt + Shift + q: X oturmunu kapatır\n");
+    printf("Alt + Shift + Enter: Terminal açar\n");
 
     // EWMH atomlarını başlat
     init_atoms();
