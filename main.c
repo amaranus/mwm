@@ -82,6 +82,7 @@ int outer_gap = OUTER_GAP;
 int inner_gap = INNER_GAP;
 int gaps_enabled = 1;   // Boşluklar varsayılan olarak açık
 float master_size_percent = 50.0;  // Ana bölge genişliği yüzdesi (başlangıçta %50)
+int is_switching_workspace = 0;  // Workspace değişimi sırasında bayrak
 
 // Workspace yapısı
 typedef struct {
@@ -492,6 +493,8 @@ void switch_workspace(int new_workspace) {
 
     printf("Workspace değiştiriliyor: %d -> %d\n", current_workspace + 1, new_workspace + 1);
 
+    is_switching_workspace = 1;  // Workspace değişimi başladı
+
     // Mevcut workspace'deki pencereleri gizle
     for (int i = 0; i < workspaces[current_workspace].window_count; i++) {
         Window w = workspaces[current_workspace].windows[i];
@@ -733,7 +736,7 @@ void start_move(XButtonEvent *event) {
         orig_x = attrs.x;
         orig_y = attrs.y;
         orig_width = attrs.width;
-        orig_height = attrs.height;
+        orig_height = attrs.height;        
 
         // Fare ikonunu değiştir
         Cursor cursor = XCreateFontCursor(display, XC_fleur);
@@ -782,6 +785,9 @@ void handle_motion(XMotionEvent *event) {
                        orig_x + xdiff,
                        orig_y + ydiff);
         }
+    } else if (is_switching_workspace) {
+        // Workspace değişimi sırasında fare hareketi algılandı
+        is_switching_workspace = 0;
     }
 }
 
@@ -791,6 +797,7 @@ void stop_drag(XButtonEvent *event) {
         XUngrabPointer(display, CurrentTime);
         dragging_window = None;
         resize_mode = 0;
+        
     }
 }
 
@@ -907,8 +914,6 @@ void move_window_to_workspace(Window window, int from_ws, int to_ws) {
     printf("Pencere %ld workspace %d'den %d'e taşındı\n", 
            window, from_ws + 1, to_ws + 1);
 }
-
-
 
 // Klavye olaylarını işle
 void handle_key_press(XKeyEvent *event) {
@@ -1392,7 +1397,7 @@ int main() {
                     handle_key_press(&event.xkey);
                     break;
                 case EnterNotify:
-                    if (event.xcrossing.mode == NotifyNormal) {
+                    if (event.xcrossing.mode == NotifyNormal && !is_switching_workspace) {
                         focus_window(event.xcrossing.window);
                     }
                     break;
