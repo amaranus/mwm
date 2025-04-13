@@ -248,6 +248,29 @@ Atom _NET_WM_STATE;
 Atom _NET_WM_STATE_DEMANDS_ATTENTION;
 Atom _NET_SUPPORTED;
 
+// Dialog penceresi kontrolü için fonksiyon
+int is_dialog_window(Window window) {
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    
+    Atom window_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
+    Atom dialog_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+    
+    if (XGetWindowProperty(display, window, window_type,
+                          0, 1, False, XA_ATOM, &actual_type,
+                          &actual_format, &nitems, &bytes_after,
+                          &data) == Success && data) {
+        Atom type = *(Atom*)data;
+        XFree(data);
+        if (type == dialog_type) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Pencere tipini kontrol et
 int is_bar_window(Window window) {
     XWindowAttributes attrs;
@@ -357,13 +380,30 @@ void rearrange_windows() {
     int work_width = screen_width - (2 * effective_outer_gap);
     int work_height = effective_screen_height - (2 * effective_outer_gap);  // Bar'ı hesaba kat
     
-    if (window_count == 1) {
-        // Tek pencere varsa, çalışma alanını kapla
-        XMoveResizeWindow(display, ws->windows[0],
-                         work_x,
-                         work_y,
-                         work_width,
-                         work_height);
+    // Dialog olmayan pencere sayısını hesapla
+    int non_dialog_count = 0;
+    for (int i = 0; i < window_count; i++) {
+        if (!is_dialog_window(ws->windows[i])) {
+            non_dialog_count++;
+        }
+    }
+    
+    if (non_dialog_count == 0) {
+        return;  // Sadece dialog pencereleri varsa düzenleme yapma
+    }
+    
+    if (non_dialog_count == 1) {
+        // Tek normal pencere varsa, çalışma alanını kapla
+        for (int i = 0; i < window_count; i++) {
+            if (!is_dialog_window(ws->windows[i])) {
+                XMoveResizeWindow(display, ws->windows[i],
+                                work_x,
+                                work_y,
+                                work_width,
+                                work_height);
+                break;
+            }
+        }
         return;
     }
 
@@ -371,26 +411,41 @@ void rearrange_windows() {
     int master_area_width = (int)((float)work_width * (master_size_percent / 100.0));
 
     // Ana pencereyi yerleştir
-    XMoveResizeWindow(display, ws->windows[0],
-                     work_x,
-                     work_y,
-                     master_area_width - effective_inner_gap,
-                     work_height);
+    int master_placed = 0;
+    for (int i = 0; i < window_count; i++) {
+        if (!is_dialog_window(ws->windows[i])) {
+            if (!master_placed) {
+                XMoveResizeWindow(display, ws->windows[i],
+                                work_x,
+                                work_y,
+                                master_area_width - effective_inner_gap,
+                                work_height);
+                master_placed = 1;
+                break;
+            }
+        }
+    }
     
     // Yığın bölgesini hesapla
     int stack_x = work_x + master_area_width + effective_inner_gap;
     int stack_width = work_width - master_area_width - effective_inner_gap;
-    int stack_height = (work_height - ((window_count - 2) * effective_inner_gap)) / (window_count - 1);
+    int stack_height = (work_height - ((non_dialog_count - 2) * effective_inner_gap)) / (non_dialog_count - 1);
     
     // Diğer pencereleri yığında düzenle
     int stack_y = work_y;
-    for (int i = 1; i < window_count; i++) {
-        XMoveResizeWindow(display, ws->windows[i],
-                         stack_x,
-                         stack_y,
-                         stack_width,
-                         stack_height);
-        stack_y += stack_height + effective_inner_gap;
+    int stack_count = 0;
+    for (int i = 0; i < window_count; i++) {
+        if (!is_dialog_window(ws->windows[i])) {
+            if (stack_count > 0) {  // İlk pencere ana bölgede
+                XMoveResizeWindow(display, ws->windows[i],
+                                stack_x,
+                                stack_y,
+                                stack_width,
+                                stack_height);
+                stack_y += stack_height + effective_inner_gap;
+            }
+            stack_count++;
+        }
     }
 
     // Değişiklikleri hemen uygula
@@ -574,6 +629,30 @@ void handle_map_request(XMapRequestEvent *event) {
         rearrange_windows();
         
         printf("Bar penceresi tanındı ve yapılandırıldı\n");
+        return;
+    }
+
+    // Dialog penceresi kontrolü
+    if (is_dialog_window(event->window)) {
+        // Dialog penceresini floating modda başlat
+        XMapWindow(display, event->window);
+        XSelectInput(display, event->window,
+                    EnterWindowMask |
+                    FocusChangeMask |
+                    PropertyChangeMask |
+                    StructureNotifyMask |
+                    KeyPressMask);
+        
+        // Kenarlık kalınlığını ayarla
+        XSetWindowBorderWidth(display, event->window, BORDER_WIDTH);
+        
+        // Pencereyi mevcut workspace'e ekle
+        add_window_to_workspace(event->window, current_workspace);
+        
+        // Dialog penceresini otomatik odakla
+        focus_window(event->window);
+        
+        printf("Dialog penceresi workspace %d'e eklendi: %ld\n", current_workspace + 1, event->window);
         return;
     }
 
