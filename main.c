@@ -215,6 +215,14 @@ void grab_keys() {
     XGrabKey(display, keys.right_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, keys.right_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
 
+    // Yukarı ok tuşu
+    XGrabKey(display, keys.up_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.up_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
+    // Aşağı ok tuşu
+    XGrabKey(display, keys.down_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(display, keys.down_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
+
     // Tab tuşu
     XGrabKey(display, keys.tab_key, MODKEY, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, keys.tab_key, MODKEY | ShiftMask, root, True, GrabModeAsync, GrabModeAsync);
@@ -575,6 +583,12 @@ void switch_workspace(int new_workspace) {
     // Yeni workspace'in moduna göre pencereleri düzenle
     if (workspaces[current_workspace].mode == MODE_TILING) {
         rearrange_windows();
+    }
+
+    // Eğer yeni workspace'te pencere varsa, son pencereye odaklan
+    if (workspaces[current_workspace].window_count > 0) {
+        Window last_window = workspaces[current_workspace].windows[workspaces[current_workspace].window_count - 1];
+        focus_window(last_window);
     }
 
     XSync(display, False);
@@ -1024,6 +1038,38 @@ void handle_key_press(XKeyEvent *event) {
         else if (event->keycode == keys.q_key) {
             // X oturumunu kapat
             exec_command("pkill X");
+        }
+        else if (event->keycode == keys.left_key) {
+            // Alt + Shift + Sol: Pencereyi sola taşı
+            if (focused_window != None) {
+                XWindowAttributes attrs;
+                XGetWindowAttributes(display, focused_window, &attrs);
+                XMoveWindow(display, focused_window, attrs.x - 10, attrs.y);
+            }
+        }
+        else if (event->keycode == keys.right_key) {
+            // Alt + Shift + Sağ: Pencereyi sağa taşı
+            if (focused_window != None) {
+                XWindowAttributes attrs;
+                XGetWindowAttributes(display, focused_window, &attrs);
+                XMoveWindow(display, focused_window, attrs.x + 10, attrs.y);
+            }
+        }
+        else if (event->keycode == keys.up_key) {
+            // Alt + Shift + Yukarı: Pencereyi yukarı taşı
+            if (focused_window != None) {
+                XWindowAttributes attrs;
+                XGetWindowAttributes(display, focused_window, &attrs);
+                XMoveWindow(display, focused_window, attrs.x, attrs.y - 10);
+            }
+        }
+        else if (event->keycode == keys.down_key) {
+            // Alt + Shift + Aşağı: Pencereyi aşağı taşı
+            if (focused_window != None) {
+                XWindowAttributes attrs;
+                XGetWindowAttributes(display, focused_window, &attrs);
+                XMoveWindow(display, focused_window, attrs.x, attrs.y + 10);
+            }
         }
     }
     // Sadece Alt tuşu kombinasyonlarını kontrol et
